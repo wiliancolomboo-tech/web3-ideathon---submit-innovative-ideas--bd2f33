@@ -1,0 +1,64 @@
+flowchart TD
+    subgraph Client Layer
+        U1[Trader Alice: Buyer]
+        U2[Trader Bob: Seller]
+        KP[Decentralized Keeper / Crank]
+    end
+
+    subgraph Program Layer: Aetheris Anchor Core [Program ID: AeTH...1111]
+        Init[initialize_auction_pool]
+        Commit[commit_order]
+        Reveal[reveal_order]
+        Settle[settle_batch_auction]
+        Claim[claim_proceeds]
+    end
+
+    subgraph Storage & PDA State Layer
+        PoolPDA[(Auction Pool PDA\nseeds=[b'pool', base_mint, quote_mint])]
+        EpochPDA[(Epoch State PDA\nseeds=[b'epoch', pool_key, epoch_id])]
+        CommitPDA1[(Commit PDA: Alice\nseeds=[b'commit', epoch_key, alice_key])]
+        CommitPDA2[(Commit PDA: Bob\nseeds=[b'commit', epoch_key, bob_key])]
+        VaultBase[(Vault Base Token Account\nOwner: Pool PDA)]
+        VaultQuote[(Vault Quote Token Account\nOwner: Pool PDA)]
+    end
+
+    subgraph Token-2022 Transfer Hook Extension
+        HookProg[Transfer Hook Program\nDynamic MEV Surcharge Engine]
+        RebatePool[(Protocol Rebate Vault\n85% Surcharge Accrual)]
+    end
+
+    %% Flow Execution
+    U1 -- "1. commit_order(hash, deposit)" --> Commit
+    Commit --> CommitPDA1
+    Commit --> VaultQuote
+
+    U2 -- "1. commit_order(hash, deposit)" --> Commit
+    Commit --> CommitPDA2
+    Commit --> VaultBase
+
+    U1 -- "2. reveal_order(side, price, amt, salt)" --> Reveal
+    U2 -- "2. reveal_order(side, price, amt, salt)" --> Reveal
+    Reveal --> EpochPDA
+
+    KP -- "3. settle_batch_auction(epoch_id)" --> Settle
+    Settle --> EpochPDA
+    Settle --> PoolPDA
+
+    Settle -- "4. Execute Transfers w/ CPI Hook" --> HookProg
+    HookProg -- "Dynamic Arbitrage Tax" --> RebatePool
+    HookProg -- "Net Settle Clearance" --> VaultBase
+    HookProg -- "Net Settle Clearance" --> VaultQuote
+
+    U1 -- "5. claim_proceeds()" --> Claim
+    U2 -- "5. claim_proceeds()" --> Claim
+    Claim --> VaultBase
+    Claim --> VaultQuote
+
+    %% Security & Guard rails
+    classDef security fill:#ff3333,stroke:#333,stroke-width:1px,color:#fff;
+    classDef pda fill:#2a75d3,stroke:#333,stroke-width:1px,color:#fff;
+    classDef logic fill:#00a86b,stroke:#333,stroke-width:1px,color:#fff;
+
+    class Commit,Reveal,Settle,Claim logic;
+    class PoolPDA,EpochPDA,CommitPDA1,CommitPDA2,VaultBase,VaultQuote pda;
+    class HookProg security;
