@@ -1,0 +1,236 @@
+import * as anchor from "@coral-xyz/anchor";
+import { Program, BN } from "@coral-xyz/anchor";
+import { Ideathon } from "../target/types/ideathon";
+import { assert } from "chai";
+
+describe("ideathon", () => {
+  const provider = anchor.AnchorProvider.env();
+  anchor.setProvider(provider);
+  const connection = provider.connection;
+
+  const program = anchor.workspace.Ideathon as Program<Ideathon>;
+
+  const authority = provider.wallet as anchor.Wallet;
+  const creator = anchor.web3.Keypair.generate();
+  const reviewer1 = anchor.web3.Keypair.generate();
+  const reviewer2 = anchor.web3.Keypair.generate();
+  const creator2 = anchor.web3.Keypair.generate();
+
+  const [platform] = anchor.web3.PublicKey.findProgramAddressSync(
+    [Buffer.from("platform")],
+    program.programId
+  );
+
+  const [vault] = anchor.web3.PublicKey.findProgramAddressSync(
+    [Buffer.from("vault"), platform.toBuffer()],
+    program.programId
+  );
+
+  const roundId = new BN(0);
+  const roundPda = () =>
+    anchor.web3.PublicKey.findProgramAddressSync(
+      [Buffer.from("round"), platform.toBuffer(), roundId.toArrayLike(Buffer, "le", 8)],
+      program.programId
+    )[0];
+
+  const getIdeaPda = (id: number, round: anchor.web3.PublicKey) =>
+    anchor.web3.PublicKey.findProgramAddressSync(
+      [Buffer.from("idea"), round.toBuffer(), Buffer.from(Uint8Array.of(id, 0))],
+      program.programId
+    )[0];
+
+  const getReviewPda = (idea: anchor.web3.PublicKey, reviewer: anchor.web3.PublicKey) =>
+    anchor.web3.PublicKey.findProgramAddressSync(
+      [Buffer.from("review"), idea.toBuffer(), reviewer.toBuffer()],
+      program.programId
+    )[0];
+
+  const airdrop = async (pk: anchor.web3.PublicKey, lamports = 10_000_000_000) => {
+    await connection.confirmTransaction(
+      await connection.requestAirdrop(pk, lamports)
+    );
+  };
+
+  const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  before(async () => {
+    await airdrop(creator.publicKey);
+    await airdrop(reviewer1.publicKey);
+    await airdrop(reviewer2.publicKey);
+    await airdrop(creator2.publicKey);
+  });
+
+  it("Initializes platform", async () => {
+    await program.methods
+      .initializePlatform(new BN(100_000_000), 300) // 3% fee
+      .accounts({
+        authority: authority.publicKey,
+        platform,
+        vault,
+        treasury: authority.publicKey,
+        systemProgram: anchor.web3.SystemProgram.programId,
+      })
+      .rpc();
+
+    const cfg = await program.account.platformConfig.fetch(platform);
+    assert.ok(cfg.authority.equals(authority.publicKey));
+    assert.equal(cfg.feeBps, 300);
+    assert.equal(cfg.roundCount.toNumber(), 0);
+    assert.equal(cfg.minCreatorStakeLamports.toString(), "100000000");
+    assert.equal(cfg.paused, false);
+  });
+
+  it("Creates round, accepts submissions, performs reviews, settles and distributes", async () => {
+    const rnd = roundPda();
+    const now = Math.floor(Date.now() / 1000);
+    const duration = 5; // sec
+
+    await program.methods
+      .createRound(
+        roundId,
+        "https://ipfs.example/round-meta.json",
+        new BN(now),
+        new BN(duration),
+        20,   // max submissions
+        2,    // min votes to win
+        new BN(1_500_000_000)
+      )
+      .accounts({
+        authority: authority.publicKey,
+        platform,
+        round: rnd,
+        vault,
+        systemProgram: anchor.web3.SystemProgram.programId,
+      })
+      .rpc();
+
+    const idea1 = getIdeaPda(0, rnd);
+    const idea2 = getIdeaPda(1, rnd);
+
+    await program.methods
+      .submitIdea(
+        0,
+        "Idea #1: Cross-chain Social Proof",
+        "A secure reputation scoring engine with minimal onboarding."
+      )
+      .accounts({
+        author: creator.publicKey,
+        platform,
+        round: rnd,
+        idea: idea1,
+        vault,
+        systemProgram: anchor.web3.SystemProgram.programId,
+      })
+      .signers([creator])
+      .rpc();
+
+    await program.methods
+      .submitIdea(
+        1,
+        "Idea #2: AI Review Lints",
+        "LLM-based validator for idea feasibility and novelty."
+      )
+      .accounts({
+        author: creator2.publicKey,
+        platform,
+        round: rnd,
+        idea: idea2,
+        vault,
+        systemProgram: anchor.web3.SystemProgram.programId,
+      })
+      .signers([creator2])
+      .rpc();
+
+    const review1 = getReviewPda(idea1, reviewer1.publicKey);
+    await program.methods
+      .reviewIdea(10, "High impact, high originality")
+      .accounts({
+        reviewer: reviewer1.publicKey,
+        platform,
+        round: rnd,
+        idea: idea1,
+        review: review1,
+        systemProgram: anchor.web3.SystemProgram.programId,
+      })
+      .signers([reviewer1])
+      .rpc();
+
+    const review2 = getReviewPda(idea2, reviewer2.publicKey);
+    await program.methods
+      .reviewIdea(4, "Interesting but too broad")
+      .accounts({
+        reviewer: reviewer2.publicKey,
+        platform,
+        round: rnd,
+        idea: idea2,
+        review: review2,
+        systemProgram: anchor.web3.SystemProgram.programId,
+      })
+      .signers([reviewer2])
+      .rpc();
+
+    // wait round end
+    await sleep(7000);
+
+    await program.methods
+      .settleRound(roundId)
+      .accounts({
+        platform,
+        round: rnd,
+      })
+      .rpc();
+
+    const settled = await program.account.ideaRound.fetch(rnd);
+    assert.equal(settled.state, 2); // SettledWithWinner
+    assert.ok(!settled.winner.equals(anchor.web3.PublicKey.default));
+
+    const winnerIdea = await program.account.idea.fetch(settled.topIdea);
+    const winnerBalBefore = await connection.getBalance(winnerIdea.author);
+    const treasuryBefore = await connection.getBalance(authority.publicKey);
+
+    await program.methods
+      .claimPrize(roundId)
+      .accounts({
+        platform,
+        round: rnd,
+        idea: winnerIdeaPubKey(winnerIdea), // helper below
+        vault,
+        treasury: authority.publicKey,
+        author: winnerIdea.author,
+        systemProgram: anchor.web3.SystemProgram.programId,
+      })
+      .rpc();
+
+    const winnerBalAfter = await connection.getBalance(winnerIdea.author);
+    const treasuryAfter = await connection.getBalance(authority.publicKey);
+
+    assert.isTrue(winnerBalAfter > winnerBalBefore);
+    assert.isTrue(treasuryAfter > treasuryBefore);
+
+    const loserIdea = await program.account.idea.fetch(idea2.equals(settled.winner) ? idea1 : idea2);
+    const loserStakeBefore = await connection.getBalance(loserIdea.author);
+    await program.methods
+      .reclaimIdeaStake(roundId)
+      .accounts({
+        author: loserIdea.author,
+        platform,
+        round: rnd,
+        idea: loserIdeaPubKey(loserIdea),
+        vault,
+        systemProgram: anchor.web3.SystemProgram.programId,
+      })
+      .signers([anchor.AnchorProvider.env().wallet.payer]) // replaced by env if owner differs
+      .rpc();
+
+    const loserStakeAfter = await connection.getBalance(loserIdea.author);
+    assert.isTrue(loserStakeAfter >= loserStakeBefore);
+  });
+
+  // helper to avoid TS confusion for local variable reuse
+  function winnerIdeaPubKey(i: any): anchor.web3.PublicKey {
+    return i.publicKey; // if your generated type includes pubkey on object; otherwise pass directly by context from known PDA
+  }
+  function loserIdeaPubKey(i: any): anchor.web3.PublicKey {
+    return i.publicKey;
+  }
+});

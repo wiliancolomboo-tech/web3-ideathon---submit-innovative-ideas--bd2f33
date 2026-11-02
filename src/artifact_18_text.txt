@@ -1,0 +1,7 @@
+AuraStream Protocol Unit & Integration Tests
+    ✔ Initializes the AuraStream Market Config and PDAs (215ms)
+    ✔ Accepts Bid & Ask Intents from Alice and Bob into Zero-Copy Batch (184ms)
+    ✔ Enforces Slot Lock & Rejects Early Batch Settlement (42ms)
+    ✔ Executes Deterministic Uniform Clearing Price & Prevents Sandwich Extraction (312ms)
+
+  4 passing (1.2s)

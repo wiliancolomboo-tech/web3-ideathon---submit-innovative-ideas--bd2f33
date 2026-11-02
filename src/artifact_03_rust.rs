@@ -1,633 +1,603 @@
 use anchor_lang::prelude::*;
-use anchor_spl::token_interface::{self, Mint, TokenAccount, TokenInterface, TransferChecked};
-use solana_program::hash::hash;
+use anchor_spl::token::{self, Mint, Token, TokenAccount, Transfer};
 
-declare_id!("AeTH111111111111111111111111111111111111111");
+declare_id!("Aegis11111111111111111111111111111111111111");
 
-pub const EPOCH_SLOT_DURATION: u64 = 20; // 20 slots ~ 8 seconds
-pub const PROTOCOL_FEE_BPS: u64 = 15;    // 0.15% fee
-pub const MAX_ORDERS_PER_BATCH: usize = 32;
+pub const BUCKET_SIZE_SLOTS: u64 = 4; // Batch clearing every ~1.6s
+pub const PRECISION: u128 = 1_000_000_000_000; // 1e12 fixed-point math precision
+pub const MAX_ORACLE_DEVIATION_BPS: u64 = 500; // 5% max deviation from external reference
 
 #[program]
-pub mod aetheris {
+pub mod solaegis {
     use super::*;
 
-    pub fn initialize_pool(
-        ctx: Context<InitializePool>,
-        min_deposit: u64,
+    /// Initialize a new two-token market configuration.
+    pub fn initialize_market(
+        ctx: Context<InitializeMarket>,
+        fee_bps: u16,
     ) -> Result<()> {
-        let pool = &mut ctx.accounts.pool;
-        pool.authority = ctx.accounts.authority.key();
-        pool.base_mint = ctx.accounts.base_mint.key();
-        pool.quote_mint = ctx.accounts.quote_mint.key();
-        pool.vault_base = ctx.accounts.vault_base.key();
-        pool.vault_quote = ctx.accounts.vault_quote.key();
-        pool.current_epoch = 1;
-        pool.min_deposit = min_deposit;
-        pool.bump = ctx.bumps.pool;
+        require!(fee_bps <= 1000, SolAegisError::ExcessiveFee);
 
-        // Initialize first Epoch State
-        let epoch = &mut ctx.accounts.epoch_state;
-        epoch.epoch_id = 1;
-        epoch.pool = pool.key();
-        epoch.start_slot = Clock::get()?.slot;
-        epoch.commit_end_slot = epoch.start_slot.checked_add(EPOCH_SLOT_DURATION).unwrap();
-        epoch.reveal_end_slot = epoch.commit_end_slot.checked_add(EPOCH_SLOT_DURATION).unwrap();
-        epoch.is_settled = false;
-        epoch.clearing_price = 0;
-        epoch.total_buy_volume = 0;
-        epoch.total_sell_volume = 0;
-        epoch.revealed_order_count = 0;
-        epoch.bump = ctx.bumps.epoch_state;
+        let market = &mut ctx.accounts.market;
+        market.admin = ctx.accounts.admin.key();
+        market.mint_a = ctx.accounts.mint_a.key();
+        market.mint_b = ctx.accounts.mint_b.key();
+        market.vault_a = ctx.accounts.vault_a.key();
+        market.vault_b = ctx.accounts.vault_b.key();
+        market.fee_bps = fee_bps;
+        market.bump = ctx.bumps.market;
+        market.vault_a_bump = ctx.bumps.vault_a;
+        market.vault_b_bump = ctx.bumps.vault_b;
 
-        emit!(PoolInitialized {
-            pool: pool.key(),
-            base_mint: pool.base_mint,
-            quote_mint: pool.quote_mint,
-            epoch_id: 1,
+        emit!(MarketInitializedEvent {
+            market: market.key(),
+            mint_a: market.mint_a,
+            mint_b: market.mint_b,
         });
 
         Ok(())
     }
 
-    pub fn commit_order(
-        ctx: Context<CommitOrder>,
-        commitment_hash: [u8; 32],
-        escrow_amount: u64,
+    /// User deposits a trading intent into an active or upcoming slot bucket.
+    pub fn deposit_intent(
+        ctx: Context<DepositIntent>,
+        amount_in: u64,
+        min_amount_out: u64,
+        direction: Direction,
     ) -> Result<()> {
+        require!(amount_in > 0, SolAegisError::ZeroDepositAmount);
         let clock = Clock::get()?;
-        let epoch = &ctx.accounts.epoch_state;
-        let pool = &ctx.accounts.pool;
+        let current_slot = clock.slot;
 
-        require!(clock.slot < epoch.commit_end_slot, AetherisError::CommitPhaseClosed);
-        require!(escrow_amount >= pool.min_deposit, AetherisError::DepositBelowMinimum);
+        // Intent targets the current slot bucket boundary
+        let target_bucket = (current_slot / BUCKET_SIZE_SLOTS) * BUCKET_SIZE_SLOTS;
 
-        let commitment = &mut ctx.accounts.commitment_record;
-        commitment.user = ctx.accounts.user.key();
-        commitment.epoch = epoch.key();
-        commitment.hash = commitment_hash;
-        commitment.escrow_amount = escrow_amount;
-        commitment.is_revealed = false;
-        commitment.bump = ctx.bumps.commitment_record;
+        let batch = &mut ctx.accounts.batch;
+        if batch.slot_bucket == 0 {
+            batch.slot_bucket = target_bucket;
+            batch.market = ctx.accounts.market.key();
+            batch.status = BatchStatus::Open;
+            batch.bump = ctx.bumps.batch;
+        }
 
-        // Escrow funds safely into the pool vault
-        let cpi_accounts = TransferChecked {
-            from: ctx.accounts.user_token_account.to_account_info(),
-            mint: ctx.accounts.deposit_mint.to_account_info(),
-            to: ctx.accounts.pool_vault.to_account_info(),
-            authority: ctx.accounts.user.to_account_info(),
+        require!(
+            batch.status == BatchStatus::Open,
+            SolAegisError::BatchNotAcceptingOrders
+        );
+
+        // Transfer funds from user token account into vault
+        let (vault_account, user_token_account) = match direction {
+            Direction::AtoB => (
+                ctx.accounts.vault_a.to_account_info(),
+                ctx.accounts.user_token_account.to_account_info(),
+            ),
+            Direction::BtoA => (
+                ctx.accounts.vault_b.to_account_info(),
+                ctx.accounts.user_token_account.to_account_info(),
+            ),
         };
-        let cpi_ctx = CpiContext::new(ctx.accounts.token_program.to_account_info(), cpi_accounts);
-        token_interface::transfer_checked(cpi_ctx, escrow_amount, ctx.accounts.deposit_mint.decimals)?;
 
-        emit!(OrderCommitted {
-            user: ctx.accounts.user.key(),
-            epoch_id: epoch.epoch_id,
-            commitment_hash,
-            escrow_amount,
+        let transfer_ctx = CpiContext::new(
+            ctx.accounts.token_program.to_account_info(),
+            Transfer {
+                from: user_token_account,
+                to: vault_account,
+                authority: ctx.accounts.user.to_account_info(),
+            },
+        );
+        token::transfer(transfer_ctx, amount_in)?;
+
+        // Update user intent state
+        let intent = &mut ctx.accounts.intent;
+        intent.user = ctx.accounts.user.key();
+        intent.batch = batch.key();
+        intent.direction = direction;
+        intent.amount_in = amount_in;
+        intent.min_amount_out = min_amount_out;
+        intent.filled_amount_out = 0;
+        intent.claimed = false;
+        intent.bump = ctx.bumps.intent;
+
+        // Update batch aggregates
+        match direction {
+            Direction::AtoB => {
+                batch.total_in_a = batch.total_in_a.checked_add(amount_in).ok_or(SolAegisError::MathOverflow)?;
+            }
+            Direction::BtoA => {
+                batch.total_in_b = batch.total_in_b.checked_add(amount_in).ok_or(SolAegisError::MathOverflow)?;
+            }
+        }
+        batch.order_count = batch.order_count.checked_add(1).ok_or(SolAegisError::MathOverflow)?;
+
+        emit!(IntentSubmittedEvent {
+            batch: batch.key(),
+            user: intent.user,
+            direction,
+            amount_in,
+            min_amount_out,
         });
 
         Ok(())
     }
 
-    pub fn reveal_order(
-        ctx: Context<RevealOrder>,
-        side: u8,         // 0: Buy (Quote -> Base), 1: Sell (Base -> Quote)
-        limit_price: u64,  // Fixed-point scaled by 1e6
-        amount: u64,      // Token amount
-        salt: [u8; 16],
+    /// Solver settles a matured batch using CoW matching and uniform clearing pricing.
+    pub fn settle_batch_cow(
+        ctx: Context<SettleBatchCoW>,
+        clearing_price_scaled: u128, // Scaled by PRECISION: (Amount B per 1 Unit of A)
     ) -> Result<()> {
         let clock = Clock::get()?;
-        let epoch = &mut ctx.accounts.epoch_state;
-        let commitment = &mut ctx.accounts.commitment_record;
+        let batch = &mut ctx.accounts.batch;
 
-        require!(clock.slot >= epoch.commit_end_slot, AetherisError::CommitPhaseStillActive);
-        require!(clock.slot < epoch.reveal_end_slot, AetherisError::RevealPhaseClosed);
-        require!(!commitment.is_revealed, AetherisError::OrderAlreadyRevealed);
+        // Invariant 1: Batch maturity check
+        require!(
+            clock.slot >= batch.slot_bucket + BUCKET_SIZE_SLOTS,
+            SolAegisError::BatchNotMatured
+        );
+        require!(
+            batch.status == BatchStatus::Open,
+            SolAegisError::BatchAlreadySettled
+        );
 
-        // Verify cryptographically: SHA256(user, side, limit_price, amount, salt) == commitment_hash
-        let mut preimage = Vec::with_capacity(32 + 1 + 8 + 8 + 16);
-        preimage.extend_from_slice(commitment.user.as_ref());
-        preimage.push(side);
-        preimage.extend_from_slice(&limit_price.to_le_bytes());
-        preimage.extend_from_slice(&amount.to_le_bytes());
-        preimage.extend_from_slice(&salt);
+        require!(clearing_price_scaled > 0, SolAegisError::InvalidClearingPrice);
 
-        let computed_hash = hash(&preimage).to_bytes();
-        require!(computed_hash == commitment.hash, AetherisError::HashMismatch);
-        require!(commitment.escrow_amount >= amount, AetherisError::InsufficientEscrow);
+        // Execute CoW matching logic
+        // Let total_a = Total token A deposited (Direction AtoB)
+        // Let total_b = Total token B deposited (Direction BtoA)
+        // Equivalent Token B demanded by A = total_a * clearing_price_scaled / PRECISION
+        let b_needed_for_a = (batch.total_in_a as u128)
+            .checked_mul(clearing_price_scaled)
+            .ok_or(SolAegisError::MathOverflow)?
+            .checked_div(PRECISION)
+            .ok_or(SolAegisError::MathOverflow)?;
 
-        commitment.is_revealed = true;
-        commitment.side = side;
-        commitment.limit_price = limit_price;
-        commitment.amount = amount;
-
-        // Populate the bounded order cache in epoch state
-        let idx = epoch.revealed_order_count as usize;
-        require!(idx < MAX_ORDERS_PER_BATCH, AetherisError::BatchCapacityExceeded);
-
-        epoch.orders[idx] = OrderSummary {
-            user: commitment.user,
-            side,
-            limit_price,
-            amount,
-            claimed: false,
-        };
-        epoch.revealed_order_count = epoch.revealed_order_count.checked_add(1).unwrap();
-
-        if side == 0 {
-            epoch.total_buy_volume = epoch.total_buy_volume.checked_add(amount).unwrap();
+        let (matched_a, matched_b) = if b_needed_for_a <= batch.total_in_b as u128 {
+            // Token A is the short side; all A is satisfied internally
+            let matched_a = batch.total_in_a as u128;
+            let matched_b = b_needed_for_a;
+            (matched_a, matched_b)
         } else {
-            epoch.total_sell_volume = epoch.total_sell_volume.checked_add(amount).unwrap();
-        }
+            // Token B is the short side; all B is satisfied internally
+            let matched_b = batch.total_in_b as u128;
+            let matched_a = matched_b
+                .checked_mul(PRECISION)
+                .ok_or(SolAegisError::MathOverflow)?
+                .checked_div(clearing_price_scaled)
+                .ok_or(SolAegisError::MathOverflow)?;
+            (matched_a, matched_b)
+        };
 
-        emit!(OrderRevealed {
-            user: commitment.user,
-            epoch_id: epoch.epoch_id,
-            side,
-            limit_price,
-            amount,
+        batch.matched_volume_a = matched_a as u64;
+        batch.matched_volume_b = matched_b as u64;
+        batch.clearing_price_scaled = clearing_price_scaled;
+        batch.status = BatchStatus::Settled;
+        batch.solver = ctx.accounts.solver.key();
+
+        emit!(BatchSettledEvent {
+            batch: batch.key(),
+            clearing_price: clearing_price_scaled,
+            matched_a: batch.matched_volume_a,
+            matched_b: batch.matched_volume_b,
         });
 
         Ok(())
     }
 
-    pub fn settle_batch_auction(ctx: Context<SettleBatchAuction>) -> Result<()> {
-        let clock = Clock::get()?;
-        let epoch = &mut ctx.accounts.epoch_state;
-        let pool = &mut ctx.accounts.pool;
+    /// User claims their proportional tokens or refund post-batch settlement.
+    pub fn claim_execution(ctx: Context<ClaimExecution>) -> Result<()> {
+        let batch = &ctx.accounts.batch;
+        let intent = &mut ctx.accounts.intent;
+        let market = &ctx.accounts.market;
 
-        require!(clock.slot >= epoch.reveal_end_slot, AetherisError::RevealPhaseStillActive);
-        require!(!epoch.is_settled, AetherisError::EpochAlreadySettled);
+        require!(batch.status == BatchStatus::Settled, SolAegisError::BatchNotSettled);
+        require!(!intent.claimed, SolAegisError::AlreadyClaimed);
+        require!(intent.user == ctx.accounts.user.key(), SolAegisError::UnauthorizedClaim);
 
-        let count = epoch.revealed_order_count as usize;
-        require!(count > 0, AetherisError::EmptyBatch);
-
-        // Uniform Clearing Price Computation:
-        // Aggregate supply/demand curves from revealed orders
-        let mut best_clearing_price: u64 = 0;
-        let mut max_matched_volume: u64 = 0;
-
-        // Iterate over candidate prices present in batch limit prices
-        for i in 0..count {
-            let candidate_price = epoch.orders[i].limit_price;
-            let mut cumulative_bids: u64 = 0;
-            let mut cumulative_asks: u64 = 0;
-
-            for j in 0..count {
-                let order = &epoch.orders[j];
-                if order.side == 0 && order.limit_price >= candidate_price {
-                    // Buy orders willing to pay >= candidate_price
-                    cumulative_bids = cumulative_bids.checked_add(order.amount).unwrap();
-                } else if order.side == 1 && order.limit_price <= candidate_price {
-                    // Sell orders willing to sell <= candidate_price
-                    cumulative_asks = cumulative_asks.checked_add(order.amount).unwrap();
-                }
-            }
-
-            let executable_volume = std::cmp::min(cumulative_bids, cumulative_asks);
-            if executable_volume > max_matched_volume {
-                max_matched_volume = executable_volume;
-                best_clearing_price = candidate_price;
-            }
-        }
-
-        epoch.clearing_price = best_clearing_price;
-        epoch.matched_volume = max_matched_volume;
-        epoch.is_settled = true;
-
-        // Crank incentive distribution (transfer fixed protocol rebate to keeper)
-        let keeper_reward = max_matched_volume
-            .checked_mul(PROTOCOL_FEE_BPS).unwrap()
-            .checked_div(10_000).unwrap();
-
-        pool.current_epoch = pool.current_epoch.checked_add(1).unwrap();
-
-        emit!(BatchSettled {
-            epoch_id: epoch.epoch_id,
-            clearing_price: best_clearing_price,
-            matched_volume: max_matched_volume,
-            crank_keeper: ctx.accounts.crank_keeper.key(),
-            keeper_reward,
-        });
-
-        Ok(())
-    }
-
-    pub fn claim_proceeds(ctx: Context<ClaimProceeds>, order_index: u8) -> Result<()> {
-        let epoch = &mut ctx.accounts.epoch_state;
-        let pool = &ctx.accounts.pool;
-        let idx = order_index as usize;
-
-        require!(epoch.is_settled, AetherisError::EpochNotSettled);
-        require!(idx < epoch.revealed_order_count as usize, AetherisError::InvalidOrderIndex);
-
-        let order = &mut epoch.orders[idx];
-        require!(order.user == ctx.accounts.user.key(), AetherisError::UnauthorizedClaim);
-        require!(!order.claimed, AetherisError::AlreadyClaimed);
-
-        order.claimed = true;
-
-        let clearing_price = epoch.clearing_price;
-        let pool_bump = pool.bump;
-        let seeds: &[&[u8]] = &[
-            b"pool",
-            pool.base_mint.as_ref(),
-            pool.quote_mint.as_ref(),
-            &[pool_bump],
+        let seeds = &[
+            b"market".as_ref(),
+            market.mint_a.as_ref(),
+            market.mint_b.as_ref(),
+            &[market.bump],
         ];
         let signer = &[&seeds[..]];
 
-        if order.side == 0 {
-            // Buyer: Limit price must be >= clearing price to match
-            if order.limit_price >= clearing_price && clearing_price > 0 {
-                // Matched Buy: Pay quote, receive base
-                // Amount of base received = (quote_amount * 1e6) / clearing_price
-                let base_to_receive = (order.amount as u128)
-                    .checked_mul(1_000_000).unwrap()
-                    .checked_div(clearing_price as u128).unwrap() as u64;
+        match intent.direction {
+            Direction::AtoB => {
+                // Determine user fill based on pro-rata share of total matched volume
+                let user_share = (intent.amount_in as u128)
+                    .checked_mul(batch.matched_volume_a as u128)
+                    .ok_or(SolAegisError::MathOverflow)?
+                    .checked_div(batch.total_in_a as u128)
+                    .ok_or(SolAegisError::MathOverflow)? as u64;
 
-                let cpi_accounts = TransferChecked {
-                    from: ctx.accounts.vault_base.to_account_info(),
-                    mint: ctx.accounts.base_mint.to_account_info(),
-                    to: ctx.accounts.user_base_account.to_account_info(),
-                    authority: ctx.accounts.pool.to_account_info(),
-                };
-                token_interface::transfer_checked(
-                    CpiContext::new_with_signer(ctx.accounts.token_program.to_account_info(), cpi_accounts, signer),
-                    base_to_receive,
-                    ctx.accounts.base_mint.decimals,
-                )?;
-            } else {
-                // Refund unexecuted quote tokens in full
-                let cpi_accounts = TransferChecked {
-                    from: ctx.accounts.vault_quote.to_account_info(),
-                    mint: ctx.accounts.quote_mint.to_account_info(),
-                    to: ctx.accounts.user_quote_account.to_account_info(),
-                    authority: ctx.accounts.pool.to_account_info(),
-                };
-                token_interface::transfer_checked(
-                    CpiContext::new_with_signer(ctx.accounts.token_program.to_account_info(), cpi_accounts, signer),
-                    order.amount,
-                    ctx.accounts.quote_mint.decimals,
-                )?;
+                let output_b = (user_share as u128)
+                    .checked_mul(batch.clearing_price_scaled)
+                    .ok_or(SolAegisError::MathOverflow)?
+                    .checked_div(PRECISION)
+                    .ok_or(SolAegisError::MathOverflow)? as u64;
+
+                let unfulfilled_refund_a = intent.amount_in.checked_sub(user_share).ok_or(SolAegisError::MathOverflow)?;
+
+                // Slippage assertion against individual limit
+                if user_share > 0 {
+                    require!(output_b >= intent.min_amount_out, SolAegisError::SlippageExceeded);
+                    
+                    // Transfer Token B to user
+                    let transfer_b_ctx = CpiContext::new_with_signer(
+                        ctx.accounts.token_program.to_account_info(),
+                        Transfer {
+                            from: ctx.accounts.vault_b.to_account_info(),
+                            to: ctx.accounts.user_token_account_b.to_account_info(),
+                            authority: ctx.accounts.market.to_account_info(),
+                        },
+                        signer,
+                    );
+                    token::transfer(transfer_b_ctx, output_b)?;
+                }
+
+                // Refund unmatched Token A
+                if unfulfilled_refund_a > 0 {
+                    let refund_a_ctx = CpiContext::new_with_signer(
+                        ctx.accounts.token_program.to_account_info(),
+                        Transfer {
+                            from: ctx.accounts.vault_a.to_account_info(),
+                            to: ctx.accounts.user_token_account_a.to_account_info(),
+                            authority: ctx.accounts.market.to_account_info(),
+                        },
+                        signer,
+                    );
+                    token::transfer(refund_a_ctx, unfulfilled_refund_a)?;
+                }
+
+                intent.filled_amount_out = output_b;
             }
-        } else {
-            // Seller: Limit price must be <= clearing price to match
-            if order.limit_price <= clearing_price && clearing_price > 0 {
-                // Matched Sell: Pay base, receive quote
-                // Amount of quote received = (base_amount * clearing_price) / 1e6
-                let quote_to_receive = (order.amount as u128)
-                    .checked_mul(clearing_price as u128).unwrap()
-                    .checked_div(1_000_000).unwrap() as u64;
+            Direction::BtoA => {
+                let user_share = (intent.amount_in as u128)
+                    .checked_mul(batch.matched_volume_b as u128)
+                    .ok_or(SolAegisError::MathOverflow)?
+                    .checked_div(batch.total_in_b as u128)
+                    .ok_or(SolAegisError::MathOverflow)? as u64;
 
-                let cpi_accounts = TransferChecked {
-                    from: ctx.accounts.vault_quote.to_account_info(),
-                    mint: ctx.accounts.quote_mint.to_account_info(),
-                    to: ctx.accounts.user_quote_account.to_account_info(),
-                    authority: ctx.accounts.pool.to_account_info(),
-                };
-                token_interface::transfer_checked(
-                    CpiContext::new_with_signer(ctx.accounts.token_program.to_account_info(), cpi_accounts, signer),
-                    quote_to_receive,
-                    ctx.accounts.quote_mint.decimals,
-                )?;
-            } else {
-                // Refund unexecuted base tokens in full
-                let cpi_accounts = TransferChecked {
-                    from: ctx.accounts.vault_base.to_account_info(),
-                    mint: ctx.accounts.base_mint.to_account_info(),
-                    to: ctx.accounts.user_base_account.to_account_info(),
-                    authority: ctx.accounts.pool.to_account_info(),
-                };
-                token_interface::transfer_checked(
-                    CpiContext::new_with_signer(ctx.accounts.token_program.to_account_info(), cpi_accounts, signer),
-                    order.amount,
-                    ctx.accounts.base_mint.decimals,
-                )?;
+                let output_a = (user_share as u128)
+                    .checked_mul(PRECISION)
+                    .ok_or(SolAegisError::MathOverflow)?
+                    .checked_div(batch.clearing_price_scaled)
+                    .ok_or(SolAegisError::MathOverflow)? as u64;
+
+                let unfulfilled_refund_b = intent.amount_in.checked_sub(user_share).ok_or(SolAegisError::MathOverflow)?;
+
+                if user_share > 0 {
+                    require!(output_a >= intent.min_amount_out, SolAegisError::SlippageExceeded);
+
+                    // Transfer Token A to user
+                    let transfer_a_ctx = CpiContext::new_with_signer(
+                        ctx.accounts.token_program.to_account_info(),
+                        Transfer {
+                            from: ctx.accounts.vault_a.to_account_info(),
+                            to: ctx.accounts.user_token_account_a.to_account_info(),
+                            authority: ctx.accounts.market.to_account_info(),
+                        },
+                        signer,
+                    );
+                    token::transfer(transfer_a_ctx, output_a)?;
+                }
+
+                // Refund unmatched Token B
+                if unfulfilled_refund_b > 0 {
+                    let refund_b_ctx = CpiContext::new_with_signer(
+                        ctx.accounts.token_program.to_account_info(),
+                        Transfer {
+                            from: ctx.accounts.vault_b.to_account_info(),
+                            to: ctx.accounts.user_token_account_b.to_account_info(),
+                            authority: ctx.accounts.market.to_account_info(),
+                        },
+                        signer,
+                    );
+                    token::transfer(refund_b_ctx, unfulfilled_refund_b)?;
+                }
+
+                intent.filled_amount_out = output_a;
             }
         }
+
+        intent.claimed = true;
+        emit!(IntentClaimedEvent {
+            intent: intent.key(),
+            user: intent.user,
+            filled: intent.filled_amount_out,
+        });
 
         Ok(())
     }
 }
 
-// -----------------------------------------------------------------------------
-// ACCOUNT VALIDATION CONTEXTS
-// -----------------------------------------------------------------------------
+// ---------------------------------------------------------
+// Contexts & Account Layouts
+// ---------------------------------------------------------
 
 #[derive(Accounts)]
-pub mod initialize_pool_context {
-    use super::*;
+pub struct InitializeMarket<'info> {
+    #[account(mut)]
+    pub admin: Signer<'info>,
+    pub mint_a: Box<Account<'info, Mint>>,
+    pub mint_b: Box<Account<'info, Mint>>,
 
-    #[derive(Accounts)]
-    pub struct InitializePool<'info> {
-        #[account(mut)]
-        pub authority: Signer<'info>,
+    #[account(
+        init,
+        payer = admin,
+        space = 8 + Market::LEN,
+        seeds = [b"market", mint_a.key().as_ref(), mint_b.key().as_ref()],
+        bump
+    )]
+    pub market: Box<Account<'info, Market>>,
 
-        pub base_mint: InterfaceAccount<'info, Mint>,
-        pub quote_mint: InterfaceAccount<'info, Mint>,
+    #[account(
+        init,
+        payer = admin,
+        seeds = [b"vault_a", market.key().as_ref()],
+        bump,
+        token::mint = mint_a,
+        token::authority = market
+    )]
+    pub vault_a: Box<Account<'info, TokenAccount>>,
 
-        #[account(
-            init,
-            payer = authority,
-            space = 8 + AuctionPool::LEN,
-            seeds = [b"pool", base_mint.key().as_ref(), quote_mint.key().as_ref()],
-            bump
-        )]
-        pub pool: Box<Account<'info, AuctionPool>>,
+    #[account(
+        init,
+        payer = admin,
+        seeds = [b"vault_b", market.key().as_ref()],
+        bump,
+        token::mint = mint_b,
+        token::authority = market
+    )]
+    pub vault_b: Box<Account<'info, TokenAccount>>,
 
-        #[account(
-            init,
-            payer = authority,
-            space = 8 + EpochState::LEN,
-            seeds = [b"epoch", pool.key().as_ref(), &1u64.to_le_bytes()],
-            bump
-        )]
-        pub epoch_state: Box<Account<'info, EpochState>>,
-
-        #[account(
-            init,
-            payer = authority,
-            token::mint = base_mint,
-            token::authority = pool,
-            seeds = [b"vault_base", pool.key().as_ref()],
-            bump
-        )]
-        pub vault_base: InterfaceAccount<'info, TokenAccount>,
-
-        #[account(
-            init,
-            payer = authority,
-            token::mint = quote_mint,
-            token::authority = pool,
-            seeds = [b"vault_quote", pool.key().as_ref()],
-            bump
-        )]
-        pub vault_quote: InterfaceAccount<'info, TokenAccount>,
-
-        pub system_program: Program<'info, System>,
-        pub token_program: Interface<'info, TokenInterface>,
-        pub rent: Sysvar<'info, Rent>,
-    }
+    pub system_program: Program<'info, System>,
+    pub token_program: Program<'info, Token>,
+    pub rent: Sysvar<'info, Rent>,
 }
-pub use initialize_pool_context::*;
 
 #[derive(Accounts)]
-pub struct CommitOrder<'info> {
+pub struct DepositIntent<'info> {
     #[account(mut)]
     pub user: Signer<'info>,
 
     #[account(
-        seeds = [b"pool", pool.base_mint.as_ref(), pool.quote_mint.as_ref()],
-        bump = pool.bump
+        seeds = [b"market", market.mint_a.as_ref(), market.mint_b.as_ref()],
+        bump = market.bump
     )]
-    pub pool: Box<Account<'info, AuctionPool>>,
+    pub market: Box<Account<'info, Market>>,
 
     #[account(
-        mut,
-        seeds = [b"epoch", pool.key().as_ref(), &epoch_state.epoch_id.to_le_bytes()],
-        bump = epoch_state.bump
+        init_if_needed,
+        payer = user,
+        space = 8 + BatchBucket::LEN,
+        seeds = [b"batch", market.key().as_ref(), &((Clock::get().unwrap().slot / BUCKET_SIZE_SLOTS) * BUCKET_SIZE_SLOTS).to_le_bytes()],
+        bump
     )]
-    pub epoch_state: Box<Account<'info, EpochState>>,
+    pub batch: Box<Account<'info, BatchBucket>>,
 
     #[account(
         init,
         payer = user,
-        space = 8 + OrderCommitment::LEN,
-        seeds = [b"commit", epoch_state.key().as_ref(), user.key().as_ref()],
+        space = 8 + UserIntent::LEN,
+        seeds = [b"intent", batch.key().as_ref(), user.key().as_ref()],
         bump
     )]
-    pub commitment_record: Box<Account<'info, OrderCommitment>>,
+    pub intent: Box<Account<'info, UserIntent>>,
 
     #[account(mut)]
-    pub user_token_account: InterfaceAccount<'info, TokenAccount>,
-    pub deposit_mint: InterfaceAccount<'info, Mint>,
+    pub user_token_account: Box<Account<'info, TokenAccount>>,
 
-    #[account(mut)]
-    pub pool_vault: InterfaceAccount<'info, TokenAccount>,
+    #[account(
+        mut,
+        seeds = [b"vault_a", market.key().as_ref()],
+        bump = market.vault_a_bump
+    )]
+    pub vault_a: Box<Account<'info, TokenAccount>>,
 
-    pub token_program: Interface<'info, TokenInterface>,
+    #[account(
+        mut,
+        seeds = [b"vault_b", market.key().as_ref()],
+        bump = market.vault_b_bump
+    )]
+    pub vault_b: Box<Account<'info, TokenAccount>>,
+
+    pub token_program: Program<'info, Token>,
     pub system_program: Program<'info, System>,
 }
 
 #[derive(Accounts)]
-pub struct RevealOrder<'info> {
+pub struct SettleBatchCoW<'info> {
+    #[account(mut)]
+    pub solver: Signer<'info>,
+
+    #[account(
+        seeds = [b"market", market.mint_a.as_ref(), market.mint_b.as_ref()],
+        bump = market.bump
+    )]
+    pub market: Box<Account<'info, Market>>,
+
+    #[account(
+        mut,
+        seeds = [b"batch", market.key().as_ref(), &batch.slot_bucket.to_le_bytes()],
+        bump = batch.bump
+    )]
+    pub batch: Box<Account<'info, BatchBucket>>,
+}
+
+#[derive(Accounts)]
+pub struct ClaimExecution<'info> {
+    #[account(mut)]
     pub user: Signer<'info>,
 
     #[account(
         mut,
-        seeds = [b"epoch", epoch_state.pool.as_ref(), &epoch_state.epoch_id.to_le_bytes()],
-        bump = epoch_state.bump
+        seeds = [b"market", market.mint_a.as_ref(), market.mint_b.as_ref()],
+        bump = market.bump
     )]
-    pub epoch_state: Box<Account<'info, EpochState>>,
+    pub market: Box<Account<'info, Market>>,
+
+    #[account(
+        seeds = [b"batch", market.key().as_ref(), &batch.slot_bucket.to_le_bytes()],
+        bump = batch.bump
+    )]
+    pub batch: Box<Account<'info, BatchBucket>>,
 
     #[account(
         mut,
-        seeds = [b"commit", epoch_state.key().as_ref(), user.key().as_ref()],
-        bump = commitment_record.bump,
-        has_one = user
+        seeds = [b"intent", batch.key().as_ref(), user.key().as_ref()],
+        bump = intent.bump
     )]
-    pub commitment_record: Box<Account<'info, OrderCommitment>>,
+    pub intent: Box<Account<'info, UserIntent>>,
+
+    #[account(
+        mut,
+        seeds = [b"vault_a", market.key().as_ref()],
+        bump = market.vault_a_bump
+    )]
+    pub vault_a: Box<Account<'info, TokenAccount>>,
+
+    #[account(
+        mut,
+        seeds = [b"vault_b", market.key().as_ref()],
+        bump = market.vault_b_bump
+    )]
+    pub vault_b: Box<Account<'info, TokenAccount>>,
+
+    #[account(mut)]
+    pub user_token_account_a: Box<Account<'info, TokenAccount>>,
+
+    #[account(mut)]
+    pub user_token_account_b: Box<Account<'info, TokenAccount>>,
+
+    pub token_program: Program<'info, Token>,
 }
 
-#[derive(Accounts)]
-pub struct SettleBatchAuction<'info> {
-    #[account(mut)]
-    pub crank_keeper: Signer<'info>,
-
-    #[account(
-        mut,
-        seeds = [b"pool", pool.base_mint.as_ref(), pool.quote_mint.as_ref()],
-        bump = pool.bump
-    )]
-    pub pool: Box<Account<'info, AuctionPool>>,
-
-    #[account(
-        mut,
-        seeds = [b"epoch", pool.key().as_ref(), &epoch_state.epoch_id.to_le_bytes()],
-        bump = epoch_state.bump
-    )]
-    pub epoch_state: Box<Account<'info, EpochState>>,
-}
-
-#[derive(Accounts)]
-pub struct ClaimProceeds<'info> {
-    #[account(mut)]
-    pub user: Signer<'info>,
-
-    #[account(
-        seeds = [b"pool", pool.base_mint.as_ref(), pool.quote_mint.as_ref()],
-        bump = pool.bump
-    )]
-    pub pool: Box<Account<'info, AuctionPool>>,
-
-    #[account(
-        mut,
-        seeds = [b"epoch", pool.key().as_ref(), &epoch_state.epoch_id.to_le_bytes()],
-        bump = epoch_state.bump
-    )]
-    pub epoch_state: Box<Account<'info, EpochState>>,
-
-    #[account(
-        mut,
-        seeds = [b"vault_base", pool.key().as_ref()],
-        bump
-    )]
-    pub vault_base: InterfaceAccount<'info, TokenAccount>,
-
-    #[account(
-        mut,
-        seeds = [b"vault_quote", pool.key().as_ref()],
-        bump
-    )]
-    pub vault_quote: InterfaceAccount<'info, TokenAccount>,
-
-    #[account(mut)]
-    pub user_base_account: InterfaceAccount<'info, TokenAccount>,
-    #[account(mut)]
-    pub user_quote_account: InterfaceAccount<'info, TokenAccount>,
-
-    pub base_mint: InterfaceAccount<'info, Mint>,
-    pub quote_mint: InterfaceAccount<'info, Mint>,
-    pub token_program: Interface<'info, TokenInterface>,
-}
-
-// -----------------------------------------------------------------------------
-// STATE STRUCTURES
-// -----------------------------------------------------------------------------
+// ---------------------------------------------------------
+// State Layouts & Types
+// ---------------------------------------------------------
 
 #[account]
-pub struct AuctionPool {
-    pub authority: Pubkey,     // 32
-    pub base_mint: Pubkey,     // 32
-    pub quote_mint: Pubkey,    // 32
-    pub vault_base: Pubkey,    // 32
-    pub vault_quote: Pubkey,   // 32
-    pub current_epoch: u64,    // 8
-    pub min_deposit: u64,      // 8
+pub struct Market {
+    pub admin: Pubkey,         // 32
+    pub mint_a: Pubkey,        // 32
+    pub mint_b: Pubkey,        // 32
+    pub vault_a: Pubkey,       // 32
+    pub vault_b: Pubkey,       // 32
+    pub fee_bps: u16,          // 2
     pub bump: u8,              // 1
+    pub vault_a_bump: u8,      // 1
+    pub vault_b_bump: u8,      // 1
 }
 
-impl AuctionPool {
-    pub const LEN: usize = 32 + 32 + 32 + 32 + 32 + 8 + 8 + 1;
+impl Market {
+    pub const LEN: usize = 32 + 32 + 32 + 32 + 32 + 2 + 1 + 1 + 1;
 }
 
 #[account]
-pub struct OrderCommitment {
-    pub user: Pubkey,          // 32
-    pub epoch: Pubkey,         // 32
-    pub hash: [u8; 32],        // 32
-    pub escrow_amount: u64,    // 8
-    pub side: u8,              // 1
-    pub limit_price: u64,      // 8
-    pub amount: u64,           // 8
-    pub is_revealed: bool,     // 1
-    pub bump: u8,              // 1
+pub struct BatchBucket {
+    pub market: Pubkey,               // 32
+    pub slot_bucket: u64,             // 8
+    pub total_in_a: u64,              // 8
+    pub total_in_b: u64,              // 8
+    pub matched_volume_a: u64,        // 8
+    pub matched_volume_b: u64,        // 8
+    pub clearing_price_scaled: u128,  // 16
+    pub solver: Pubkey,               // 32
+    pub order_count: u32,             // 4
+    pub status: BatchStatus,          // 1
+    pub bump: u8,                     // 1
 }
 
-impl OrderCommitment {
-    pub const LEN: usize = 32 + 32 + 32 + 8 + 1 + 8 + 8 + 1 + 1;
+impl BatchBucket {
+    pub const LEN: usize = 32 + 8 + 8 + 8 + 8 + 8 + 16 + 32 + 4 + 1 + 1;
 }
 
-#[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, Default)]
-pub struct OrderSummary {
+#[account]
+pub struct UserIntent {
     pub user: Pubkey,          // 32
-    pub side: u8,              // 1
-    pub limit_price: u64,      // 8
-    pub amount: u64,           // 8
+    pub batch: Pubkey,         // 32
+    pub direction: Direction,  // 1
+    pub amount_in: u64,        // 8
+    pub min_amount_out: u64,   // 8
+    pub filled_amount_out: u64,// 8
     pub claimed: bool,         // 1
+    pub bump: u8,              // 1
 }
 
-#[account]
-pub struct EpochState {
-    pub epoch_id: u64,                             // 8
-    pub pool: Pubkey,                              // 32
-    pub start_slot: u64,                           // 8
-    pub commit_end_slot: u64,                      // 8
-    pub reveal_end_slot: u64,                      // 8
-    pub is_settled: bool,                          // 1
-    pub clearing_price: u64,                       // 8
-    pub matched_volume: u64,                       // 8
-    pub total_buy_volume: u64,                     // 8
-    pub total_sell_volume: u64,                    // 8
-    pub revealed_order_count: u16,                 // 2
-    pub orders: [OrderSummary; MAX_ORDERS_PER_BATCH], // 50 * 32 = 1600
-    pub bump: u8,                                  // 1
+impl UserIntent {
+    pub const LEN: usize = 32 + 32 + 1 + 8 + 8 + 8 + 1 + 1;
 }
 
-impl EpochState {
-    pub const LEN: usize = 8 + 32 + 8 + 8 + 8 + 1 + 8 + 8 + 8 + 8 + 2 + (MAX_ORDERS_PER_BATCH * 50) + 1;
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, PartialEq, Eq)]
+pub enum Direction {
+    AtoB,
+    BtoA,
 }
 
-// -----------------------------------------------------------------------------
-// EVENTS & ERRORS
-// -----------------------------------------------------------------------------
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, PartialEq, Eq)]
+pub enum BatchStatus {
+    Open,
+    Settled,
+    Expired,
+}
+
+// ---------------------------------------------------------
+// Events & Errors
+// ---------------------------------------------------------
 
 #[event]
-pub struct PoolInitialized {
-    pub pool: Pubkey,
-    pub base_mint: Pubkey,
-    pub quote_mint: Pubkey,
-    pub epoch_id: u64,
+pub struct MarketInitializedEvent {
+    pub market: Pubkey,
+    pub mint_a: Pubkey,
+    pub mint_b: Pubkey,
 }
 
 #[event]
-pub struct OrderCommitted {
+pub struct IntentSubmittedEvent {
+    pub batch: Pubkey,
     pub user: Pubkey,
-    pub epoch_id: u64,
-    pub commitment_hash: [u8; 32],
-    pub escrow_amount: u64,
+    pub direction: Direction,
+    pub amount_in: u64,
+    pub min_amount_out: u64,
 }
 
 #[event]
-pub struct OrderRevealed {
+pub struct BatchSettledEvent {
+    pub batch: Pubkey,
+    pub clearing_price: u128,
+    pub matched_a: u64,
+    pub matched_b: u64,
+}
+
+#[event]
+pub struct IntentClaimedEvent {
+    pub intent: Pubkey,
     pub user: Pubkey,
-    pub epoch_id: u64,
-    pub side: u8,
-    pub limit_price: u64,
-    pub amount: u64,
-}
-
-#[event]
-pub struct BatchSettled {
-    pub epoch_id: u64,
-    pub clearing_price: u64,
-    pub matched_volume: u64,
-    pub crank_keeper: Pubkey,
-    pub keeper_reward: u64,
+    pub filled: u64,
 }
 
 #[error_code]
-pub enum AetherisError {
-    #[msg("Commitment window for this epoch is closed.")]
-    CommitPhaseClosed,
-    #[msg("Commitment window is still active; reveals forbidden.")]
-    CommitPhaseStillActive,
-    #[msg("Reveal phase has concluded.")]
-    RevealPhaseClosed,
-    #[msg("Reveal phase is still active; auction cannot settle.")]
-    RevealPhaseStillActive,
-    #[msg("Order already revealed.")]
-    OrderAlreadyRevealed,
-    #[msg("Order revealed preimage failed SHA256 integrity check.")]
-    HashMismatch,
-    #[msg("Escrow deposited does not cover order execution limits.")]
-    InsufficientEscrow,
-    #[msg("Epoch batch capacity exceeded.")]
-    BatchCapacityExceeded,
-    #[msg("Batch has no revealed orders to settle.")]
-    EmptyBatch,
-    #[msg("Epoch is already marked settled.")]
-    EpochAlreadySettled,
-    #[msg("Epoch is not yet settled.")]
-    EpochNotSettled,
-    #[msg("Invalid order index provided for claim.")]
-    InvalidOrderIndex,
-    #[msg("Unauthorized claim: caller is not order owner.")]
-    UnauthorizedClaim,
-    #[msg("Order proceeds have already been claimed.")]
+pub enum SolAegisError {
+    #[msg("Admin fee exceeds maximum allowed basis points (10%)")]
+    ExcessiveFee,
+    #[msg("Zero deposit amount is invalid")]
+    ZeroDepositAmount,
+    #[msg("Target batch is closed or already settled")]
+    BatchNotAcceptingOrders,
+    #[msg("Batch duration has not elapsed required slots")]
+    BatchNotMatured,
+    #[msg("Batch has already been settled")]
+    BatchAlreadySettled,
+    #[msg("Supplied clearing price is invalid")]
+    InvalidClearingPrice,
+    #[msg("Math calculation resulted in an overflow or division by zero")]
+    MathOverflow,
+    #[msg("Intent has already been claimed")]
     AlreadyClaimed,
-    #[msg("Escrow amount below minimum threshold.")]
-    DepositBelowMinimum,
+    #[msg("Batch is not settled yet")]
+    BatchNotSettled,
+    #[msg("User is not authorized to claim this intent")]
+    UnauthorizedClaim,
+    #[msg("Received execution price violates user slippage limit")]
+    SlippageExceeded,
 }

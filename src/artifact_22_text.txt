@@ -1,0 +1,8 @@
+AetherNet Protocol Full Integration Test Suite
+    ✔ Initializes Global Protocol Config (421ms)
+    ✔ Initializes Channel and Funds Vault (652ms)
+    ✔ Submits an Optimistic Settlement with Valid Consumer Ed25519 Signature (489ms)
+    ✔ Rejects settlement finalization while dispute window is active (124ms)
+    ✔ Successfully Challenges Byzantine Settlement with Higher Nonce State (538ms)
+
+  5 passing (2.3s)

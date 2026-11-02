@@ -1,0 +1,30 @@
+# IDEA Submission: **Solana IDEATHON Protocol**  
+## “On-chain Innovation Contest Engine with Verifiable Submissions, Judge Voting, and Keeper-Driven Payouts”
+
+## 1) Executive Technical Summary & System Value Proposition
+
+### Problem
+Hackathon idea intake is usually off-chain (forms/Discord/Notion), which creates:
+- unverifiable/suboptimal submission integrity,
+- weak judge accountability,
+- unclear tie-breaker and scoring logic,
+- delayed/manual award distribution.
+
+### Proposed Solution
+**IDEATHON** is an on-chain Solana program + keeper stack for transparent idea lifecycle management:
+1. **Event setup** by organizer (time windows, judge set, reward vault).
+2. **Idea submission** by participants (IPFS/CID-linked metadata).
+3. **Judge scoring** with one vote per idea per judge.
+4. **On-chain ranking** maintained in event state.
+5. **Keeper-driven close + payout rounds** using a PDA-controlled reward vault.
+6. **Deterministic, trust-minimized payouts** to winner token accounts.
+
+### Why it wins
+- **High integrity:** event/judge/idea/vote states are PDA-authenticated and timestamp-validated.
+- **Low-friction UX:** only metadata pointers on-chain, not full idea payload.
+- **Programmable fairness:** bounded leaderboard and deterministic payout formula.
+- **Operational readiness:** built-in keeper automation path for real hackathon cadence.
+
+---
+
+## 2) Complete Visual Architecture Flowchart

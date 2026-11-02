@@ -1,0 +1,22 @@
+┌───────────────────────────┬─────────────────────────────────────────────────┬───────────────────────────────────┐
+│ Threat Vector             │ Severity & Vector Impact                        │ Nexus Mitigation & Invariant      │
+├───────────────────────────┼─────────────────────────────────────────────────┼───────────────────────────────────┤
+│ PDA Seed Collision        │ CRITICAL: Malicious actor injects spoofed vault │ Seeds are explicitly combined     │
+│                           │ to siphon user deposits.                        │ with mint_a + mint_b in canonical │
+│                           │                                                 │ order; checked at runtime.        │
+├───────────────────────────┼─────────────────────────────────────────────────┼───────────────────────────────────┤
+│ Integer Overflow /        │ CRITICAL: Invariant depletion via math          │ All arithmetic enforced via       │
+│ Precision Truncation      │ overflow / underflow attacks.                   │ checked_mul, checked_div, and     │
+│                           │                                                 │ 128-bit scaling numerators.       │
+├───────────────────────────┼─────────────────────────────────────────────────┼───────────────────────────────────┤
+│ Oracle Latency /          │ HIGH: Exploiter uses stale prices during        │ Strict slot-staleness bounds:     │
+│ Manipulation Attack       │ high market volatility.                         │ get_price_no_older_than(12 slots) │
+│                           │                                                 │ enforces instant rejection.       │
+├───────────────────────────┼─────────────────────────────────────────────────┼───────────────────────────────────┤
+│ Toxic Sandwich Extraction │ HIGH: Searcher sandwiches retail order via      │ MSVR hyperbolic tangent curve     │
+│                           │ mempool latency.                                │ widens dynamic spread to 300 bps  │
+│                           │                                                 │ instantly during delta spikes.    │
+├───────────────────────────┼─────────────────────────────────────────────────┼───────────────────────────────────┤
+│ Missing Signer / Rogue CPI│ CRITICAL: Drain vaults without authority.       │ has_one constraints on pool PDA,  │
+│                           │                                                 │ vault ownership verified via SPL. │
+└───────────────────────────┴─────────────────────────────────────────────────┴───────────────────────────────────┘

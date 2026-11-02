@@ -1,0 +1,8 @@
+Aegis AMM - Discrete Batch Uniform Price Engine
+    ✔ 1. Initializes the Aegis Dual Vault Pool (428ms)
+    ✔ 2. Deposits Initial Liquidity into Reserves (381ms)
+    ✔ 3. Commits Bidirectional Orders in the Same Slot (No Sandwich Opportunity) (512ms)
+    ✔ 4. Keeper Resolves Batch at Uniform Clearing Price (1620ms)
+    ✔ 5. Alice Claims Uniform Output Allocation (295ms)
+
+  5 passing (3.4s)

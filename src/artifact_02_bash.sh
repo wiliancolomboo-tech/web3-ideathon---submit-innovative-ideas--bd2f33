@@ -1,0 +1,1 @@
+anchor init aura_cba --template multiple

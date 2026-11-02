@@ -1,0 +1,20 @@
++-------------------------------+-----------------------------------+---------------------------------------------------------+
+| Threat Vector                 | Vulnerability Mode                | Hardened Protocol Guardrail                             |
++-------------------------------+-----------------------------------+---------------------------------------------------------+
+| Intra-slot Sandwiching        | Searchers bundle transactions     | Enforced single Uniform Clearing Price (UCP).           |
+| & Toxic Front-Running         | around user orders.               | No sub-slot pricing variance can occur.                 |
++-------------------------------+-----------------------------------+---------------------------------------------------------+
+| Solver Griefing &             | Malicious solver sets artificial  | On-chain constraint verification:                       |
+| Off-Market Pricing            | clearing price to extract value.  | `payout >= intent.min_amount_out` enforced atomically.  |
+|                               |                                   | Any limit violation reverts full transaction.           |
++-------------------------------+-----------------------------------+---------------------------------------------------------+
+| Asynchronous Batch Premature  | Solvers settle before users       | Cryptographic slot enforcement:                         |
+| Finalization                  | finish depositing intents.        | `require!(clock.slot >= batch.end_slot)`.                |
++-------------------------------+-----------------------------------+---------------------------------------------------------+
+| Cross-Program Invalidation /  | Malicious Token account injection | Strict PDA seed constraints:                            |
+| Reentrancy                    | or destination manipulation.      | `seeds = [b"vault_a", epoch_id.to_le_bytes()]` with     |
+|                               |                                   | `constraint = user_token.owner == user.key()`.          |
++-------------------------------+-----------------------------------+---------------------------------------------------------+
+| Unchecked Integer Overflow    | High token volume wrapping        | Checked arithmetic on 128-bit unsigned integers         |
+| in Fixed-Point Math           | during 1e9 price scaling.         | (`checked_mul`, `checked_div`) mapping to custom error. |
++-------------------------------+-----------------------------------+---------------------------------------------------------+

@@ -1,0 +1,12 @@
+┌───────────────────────────────────────────────┐
+                     │ Continuous Price Decay Curve (AuraCDA)        │
+   P_oracle (100%) ──┤                                               │
+   (1 - δ_start)   ──┼───┐                                           │
+                     │    \                                          │
+                     │     \                                         │
+                     │      \   Optimal Execution Zone (MEV Sharing) │
+                     │       └───► [Market Cleared at ~1.8% Discount]│
+                     │            \                                  │
+   (1 - δ_floor)   ──┼─────────────\───────────────                  │
+                     └──────┬───────────────────────┬────────────────┘
+                        slot_start              slot_end

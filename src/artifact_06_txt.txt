@@ -1,0 +1,10 @@
++-----------------------------------+-----------------------------------------+--------------------------------------------------------+
+| Attack Vector                     | Exploitation Mechanism                  | SolAegis Native Mitigation                            |
++-----------------------------------+-----------------------------------------+--------------------------------------------------------+
+| Sandwich / MEV Manipulation      | Searcher orders front/back-run trade    | Eliminated: All orders execute at identical UCP        |
+| Front-Running Batch Settlement    | Keeper intercepts clearing price tx     | Oracle deviation bounds enforce hard bounds on UCP     |
+| Stale Slot Batch Infiltration     | Attacker inserts orders into past batch | Hard check: slot bucket derived from clock.slot strictly|
+| PDA Seed Collision / Spoofing     | Fabricated fake market/batch accounts   | Canonical bump validation + strict seed constraints    |
+| Reentrancy via Token Callbacks    | Malicious Token hook re-invokes claim   | State update (`intent.claimed = true`) before transfer |
+| Unbalanced Economic Extraction    | Keeper reports asymmetric clearing rates| Strict conservation invariant check: matched_a == f(b) |
++-----------------------------------+-----------------------------------------+--------------------------------------------------------+

@@ -1,64 +1,58 @@
 flowchart TD
-    subgraph Client Layer
-        U1[Trader Alice: Buyer]
-        U2[Trader Bob: Seller]
-        KP[Decentralized Keeper / Crank]
+    subgraph UserSpace["Trader / Client Layer"]
+        U["User Wallet (Signer)"]
+        ATA_UA["User Token A ATA"]
+        ATA_UB["User Token B ATA"]
     end
 
-    subgraph Program Layer: Aetheris Anchor Core [Program ID: AeTH...1111]
-        Init[initialize_auction_pool]
-        Commit[commit_order]
-        Reveal[reveal_order]
-        Settle[settle_batch_auction]
-        Claim[claim_proceeds]
+    subgraph ProgramCore["AetherFlow Protocol (Anchor Program)"]
+        CONFIG["Global Config PDA<br/>[b'config']<br/>- Admin Authority<br/>- Fee Splits (80/15/5)<br/>- Min Slash Collateral"]
+        INTENT["Intent Account PDA<br/>[b'intent', user_pubkey, nonce]<br/>- maker: Pubkey<br/>- token_in / token_out: Pubkey<br/>- amount_in: u64<br/>- min_amount_out: u64<br/>- expiry_slot: u64<br/>- status: Active | Filled | Cancelled"]
+        VAULT["Escrow Vault PDA<br/>[b'vault', intent.key()]<br/>- Holds Token A Deposits"]
     end
 
-    subgraph Storage & PDA State Layer
-        PoolPDA[(Auction Pool PDA\nseeds=[b'pool', base_mint, quote_mint])]
-        EpochPDA[(Epoch State PDA\nseeds=[b'epoch', pool_key, epoch_id])]
-        CommitPDA1[(Commit PDA: Alice\nseeds=[b'commit', epoch_key, alice_key])]
-        CommitPDA2[(Commit PDA: Bob\nseeds=[b'commit', epoch_key, bob_key])]
-        VaultBase[(Vault Base Token Account\nOwner: Pool PDA)]
-        VaultQuote[(Vault Quote Token Account\nOwner: Pool PDA)]
+    subgraph SolverSpace["Solvers / Searcher Keepers"]
+        S["Solver Node (Signer)"]
+        S_STAKE["Solver Stake PDA<br/>[b'solver', solver_pubkey]"]
+        ATA_SA["Solver Token A ATA"]
+        ATA_SB["Solver Token B ATA"]
     end
 
-    subgraph Token-2022 Transfer Hook Extension
-        HookProg[Transfer Hook Program\nDynamic MEV Surcharge Engine]
-        RebatePool[(Protocol Rebate Vault\n85% Surcharge Accrual)]
+    subgraph ExternalLiquidity["Solana DeFi Runtime / Token Program"]
+        SPL["SPL Token Program / Token-2022"]
+        ORACLE["Pyth / Switchboard Oracle"]
     end
 
-    %% Flow Execution
-    U1 -- "1. commit_order(hash, deposit)" --> Commit
-    Commit --> CommitPDA1
-    Commit --> VaultQuote
+    %% Step 1: Initialization & Registration
+    S -->|"1. Register / Bond SOL Stake"| S_STAKE
+    
+    %% Step 2: Intent Creation
+    U -->|"2. Create Intent (token_in, token_out, min_out, expiry)"| INTENT
+    U -->|"3. Transfer Token A into Escrow"| SPL
+    SPL -->|"Store balance"| VAULT
 
-    U2 -- "1. commit_order(hash, deposit)" --> Commit
-    Commit --> CommitPDA2
-    Commit --> VaultBase
+    %% Step 3: Solver Matching & Validation
+    S -->|"4. Read Active Intent Accounts"| INTENT
+    S -->|"5. Fetch Fresh Price Data"| ORACLE
+    
+    %% Step 4: Batch Clearing / Ring Matching
+    S -->|"6. execute_intent(amount_out_provided)"| INTENT
+    S -->|"7. Transfer Token B (Principal + Surplus)"| SPL
+    SPL -->|"8. Direct Credit Token B"| ATA_UB
 
-    U1 -- "2. reveal_order(side, price, amt, salt)" --> Reveal
-    U2 -- "2. reveal_order(side, price, amt, salt)" --> Reveal
-    Reveal --> EpochPDA
+    %% Step 5: Escrow Release & Rewards
+    VAULT -->|"9. CPI Transfer Token A (Signed by PDA)"| ATA_SA
+    INTENT -->|"10. Update Status -> Filled"| INTENT
+    INTENT -->|"11. Emit IntentFilled Event"| U
 
-    KP -- "3. settle_batch_auction(epoch_id)" --> Settle
-    Settle --> EpochPDA
-    Settle --> PoolPDA
+    %% Step 6: Cancellation Fallback
+    U -.->|"Optional: cancel_intent() after expiry_slot"| INTENT
+    VAULT -.->|"Refund Token A"| ATA_UA
 
-    Settle -- "4. Execute Transfers w/ CPI Hook" --> HookProg
-    HookProg -- "Dynamic Arbitrage Tax" --> RebatePool
-    HookProg -- "Net Settle Clearance" --> VaultBase
-    HookProg -- "Net Settle Clearance" --> VaultQuote
-
-    U1 -- "5. claim_proceeds()" --> Claim
-    U2 -- "5. claim_proceeds()" --> Claim
-    Claim --> VaultBase
-    Claim --> VaultQuote
-
-    %% Security & Guard rails
-    classDef security fill:#ff3333,stroke:#333,stroke-width:1px,color:#fff;
-    classDef pda fill:#2a75d3,stroke:#333,stroke-width:1px,color:#fff;
-    classDef logic fill:#00a86b,stroke:#333,stroke-width:1px,color:#fff;
-
-    class Commit,Reveal,Settle,Claim logic;
-    class PoolPDA,EpochPDA,CommitPDA1,CommitPDA2,VaultBase,VaultQuote pda;
-    class HookProg security;
+    classDef anchor fill:#1E293B,stroke:#38BDF8,stroke-width:2px,color:#FFFFFF;
+    classDef storage fill:#0F172A,stroke:#A855F7,stroke-width:2px,color:#FFFFFF;
+    classDef actor fill:#334155,stroke:#22C55E,stroke-width:2px,color:#FFFFFF;
+    
+    class CONFIG,INTENT,S_STAKE anchor;
+    class VAULT storage;
+    class U,S actor;

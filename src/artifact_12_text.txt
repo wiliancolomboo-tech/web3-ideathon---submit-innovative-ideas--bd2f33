@@ -1,0 +1,6 @@
+AegisFlow Intent Settlement Engine Test Suite
+    ✔ 1. Successfully registers an Intent Order and locks liquidity into Escrow Vault (412ms)
+    ✔ 2. Fails to settle if solver attempts to provide less than min_amount_out (Slippage guard) (189ms)
+    ✔ 3. Executes JIT settlement with 80/20 surplus redistribution and closes accounts (325ms)
+
+  3 passing (1.2s)

@@ -1,0 +1,8 @@
+AegisAMM System Integration & Invariant Tests
+    ✔ 1. Initializes the AegisAMM Pool with custom 30 bps fee (312ms)
+    ✔ 2. Deposits base liquidity to seed bonding curve (420ms)
+    ✔ 3. Commits opposing swap intents in the same batch (Alice: A->B, Bob: B->A) (512ms)
+    ✔ 4. Keeper resolves the batch auction at Uniform Clearing Price (1684ms)
+    ✔ 5. Alice & Bob claim their tokens at the identical UCP (Sandwich Immunity Verified) (495ms)
+
+  5 passing (3.4s)

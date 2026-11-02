@@ -1,0 +1,9 @@
+nexus_flow integration tests
+    ✔ Initializes the NexusFlow Market and Genesis Ephemeral Bucket (462ms)
+    ✔ Allows Alice to commit a buy order intent (Quote -> Base) (421ms)
+    ✔ Allows Bob to commit a sell order intent (Base -> Quote) (418ms)
+    ✔ Prevents premature settlement before slot expiration (62ms)
+    ✔ Settles the Ephemeral Batch at the Uniform Clearing Price (UCP) (2652ms)
+    ✔ Executes deterministic claim for Alice and Bob (514ms)
+
+  6 passing (4.8s)

@@ -1,0 +1,9 @@
+await program.methods.initialize(
+  new BN(Date.now()/1000 - 1000),   // submission deadline
+  new BN(Date.now()/1000 + 3600),   // voting deadline
+  1,                                // min_votes
+  2,                                // max winners
+  new BN(1_000_000_000)             // total_prize (mint units)
+)
+.accounts({ ... })
+.rpc();

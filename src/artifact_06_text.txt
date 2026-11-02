@@ -1,0 +1,8 @@
+Aegis-Fi: Dutch Auction Liquidation & JIT Rebate Test Suite
+    ✔ 1. Initializes Market with Risk Parameters (75% LTV, 80% Liq Threshold) (452ms)
+    ✔ 2. Borrower deposits collateral and takes maximum borrow under LTV (390ms)
+    ✔ 3. Fails to initiate Dutch Auction while Health Factor > 1.0 (82ms)
+    ✔ 4. Initiates Dutch Auction when price drops below liquidation threshold (312ms)
+    ✔ 5. Executes Dutch Liquidation: Validates Penalty Decay, Reserve Split, and Borrower Rebate (468ms)
+
+  5 passing (2s)

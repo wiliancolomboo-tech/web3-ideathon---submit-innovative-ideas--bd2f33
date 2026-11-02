@@ -1,0 +1,9 @@
+nexus_swap QA Test Matrix
+    ✔ 1. Initializes Registry with Solvers and Fee Parameters (142ms)
+    ✔ 2. Opens an Auction Epoch with 5 Slot Duration Window (88ms)
+    ✔ 3. Users Submit Opposing CoW Orders (Buy & Sell) (215ms)
+    ✔ 4. Rejects Batch Settlement Before Slot Expiration (Anti-Cheat) (74ms)
+[Program Log: CoW Batch Settled. Base Vol: 500000, Quote Vol: 50000000, Clearing Price: 100000000000000]
+    ✔ 5. Solvers Settle Batch at Uniform Clearing Price with Zero Slippage (312ms)
+
+  5 passing (831ms)

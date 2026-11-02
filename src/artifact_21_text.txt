@@ -1,0 +1,8 @@
+pulse-stream integration test suite
+    ✔ 1. Initializes stream with exact linear rate per second (425ms)
+    ✔ 2. Prevents unauthorized claimers from accessing stream (189ms)
+    ✔ 3. Executes fractional continuous claim after simulated time lapse (3215ms)
+    ✔ 4. Allows micro-borrowing collateral within 75% LTV dynamic ceiling (298ms)
+    ✔ 5. Cancels stream gracefully and refunds unvested remainder to sender (312ms)
+
+  5 passing (4.44s)

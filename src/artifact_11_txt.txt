@@ -1,0 +1,11 @@
+[Security Verification Pipeline]
+1. Account Identity Gate (seeds, owner, mint constraints)
+   └── Validates PDA derivations & eliminates account substitution
+2. Signer Invariant Check
+   └── Validates caller authority (Creator on Cancel, Solver on Settle)
+3. Arithmetic Integrity Invariant
+   └── Checked math on all rate conversions, prevents 128-bit overflow
+4. Economic Invariant Gate
+   └── Uniform price enforcement; out >= min_proportional_out
+5. State Monotonicity Gate
+   └── Status transitions: Active -> Settled / Cancelled (Strict single terminal transition)

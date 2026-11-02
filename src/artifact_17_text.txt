@@ -1,0 +1,6 @@
+Chronos-AMM Discrete Batch Auction Protocol
+    ✔ Initializes the batch auction pool successfully (421ms)
+    ✔ Accepts commitments from multiple counter-parties within epoch (685ms)
+    ✔ Enforces epoch slot duration and successfully calculates Uniform Clearing Price (1240ms)
+
+  3 passing (2.4s)

@@ -1,0 +1,8 @@
+JIT-Shield: MEV-Resistant Settlement Suite
+    ✔ 1. Initializes the Protocol Configuration correctly (412ms)
+    ✔ 2. User creates a valid Dutch intent, locking tokens in PDA vault (388ms)
+    ✔ 3. Rejects Solver settlement if output is below dynamic Dutch curve (Slippage Guard) (195ms)
+    ✔ 4. Atomically settles the Intent with JIT solver liquidity & fees (478ms)
+    ✔ 5. Supports cancelation and vault refund for unfulfilled intents (365ms)
+
+  5 passing (2s)

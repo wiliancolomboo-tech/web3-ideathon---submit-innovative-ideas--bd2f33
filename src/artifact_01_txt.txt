@@ -1,10 +1,14 @@
-+---------------------------------------------------------------------------------------+
-|                                    AETHERIS ENGINE                                    |
-|                                                                                       |
-|   +-------------------+       +--------------------+       +----------------------+   |
-|   | 1. Commit Phase   |  ==>  | 2. Reveal Phase    |  ==>  | 3. Atomic Settlement |   |
-|   | Cryptographic bid |       | Reveal plaintext & |       | O(N) Uniform Clearing|   |
-|   | hash locked w/    |       | lock orders in     |       | Price + Token-2022   |   |
-|   | PDA Escrow        |       | Batch PDA          |       | Dynamic Rebate Hook  |   |
-|   +-------------------+       +--------------------+       +----------------------+   |
-+---------------------------------------------------------------------------------------+
+[Trader] ──> Signs Intent (Token A -> B, MinOut, Expiry)
+                        │
+                        ▼ (Locks Token A into PDA Vault)
+              ┌─────────────────────┐
+              │ AetherFlow Registry │
+              └─────────────────────┘
+                        │
+                        ▼ (Slot Auction: Ring Settlement or JIT Route)
+       [Solver] ──> Submits Clearing Proof + Fills Token B
+                        │
+                        ├─► Enforces Strict P_exec >= P_limit
+                        ├─► Transfers Token B + 80% Surplus to Trader
+                        ├─► Solver gets 15% Surplus Reward
+                        └─► Protocol Treasury receives 5%

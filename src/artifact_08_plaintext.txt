@@ -1,0 +1,7 @@
+SolAegis Intent Engine Tests
+    ✔ 1. Initializes the SolAegis protocol (185ms)
+    ✔ 2. Registers a bonded solver with collateral (142ms)
+    ✔ 3. User creates a verified intent escrow (210ms)
+    ✔ 4. Solver fulfills intent within Dutch auction constraints (320ms)
+
+  4 passing (857ms)

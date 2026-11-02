@@ -1,0 +1,7 @@
+kronos-engine-e2e
+    ✔ Initializes the Kronos Continuous Pool correctly (420ms)
+    ✔ Executes deterministic stream registration (open_stream) (310ms)
+    ✔ Enforces Continuous Lazy Evaluation over Time Deltas (3150ms)
+    ✔ Gracefully handles premature cancellation and principal refund (290ms)
+
+  4 passing (4.2s)

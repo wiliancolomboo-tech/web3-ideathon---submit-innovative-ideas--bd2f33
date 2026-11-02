@@ -1,5 +1,5 @@
-# Fund a temporary crank keeper wallet
-solana airdrop 5 $(solana-keygen pubkey ~/.config/solana/id.json)
+# Build binary artifacts and export IDL
+anchor build
 
-# Verify pool PDA derivation on-chain
-solana account <DERIVED_POOL_PDA_ADDRESS>
+# Confirm Program ID matches declare_id
+solana address -k target/deploy/chronobatch-keypair.json

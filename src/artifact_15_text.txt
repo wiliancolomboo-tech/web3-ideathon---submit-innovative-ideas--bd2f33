@@ -1,0 +1,2 @@
+Compiling aegis_flow v0.1.0 (/workspaces/aegis-flow/programs/aegis_flow)
+    Finished release [optimized] target(s) in 8.42s

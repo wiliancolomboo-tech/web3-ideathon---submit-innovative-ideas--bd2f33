@@ -1,0 +1,8 @@
+aetherflow-lifecycle-e2e
+    ✔ Initializes protocol config with 80% user surplus rebate (214ms)
+    ✔ Registers and bonds a Solver with 1 SOL stake (189ms)
+    ✔ Trader creates an intent with escrow vault (312ms)
+    ✔ Solver settles intent with positive surplus and rebates user 80% (425ms)
+    ✔ Rejects double execution of already settled intent (148ms)
+
+  5 passing (1.3s)

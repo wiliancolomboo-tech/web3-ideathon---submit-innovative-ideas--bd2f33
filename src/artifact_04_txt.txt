@@ -1,0 +1,18 @@
++---------------------------+-----------------------------------+---------------------------------------------------------+
+| Attack Vector             | Vulnerability Mechanics           | ChronoBatch Mitigation Strategy                         |
++---------------------------+-----------------------------------+---------------------------------------------------------+
+| Atomic Sandwich Attack    | Searcher places front-run &       | Invariant Clearing: Orders committed in slot N are not  |
+|                           | back-run orders in same block     | settled sequentially. All participants receive P*.      |
++---------------------------+-----------------------------------+---------------------------------------------------------+
+| Reentrancy via CPI Hook   | Malicious Token-2022 hook calls   | State Lock: `order_intent.claimed = true` is mutated    |
+|                           | back into `claim_cleared_swap()`  | and written before CPI token dispatch (Checks-Effects).  |
++---------------------------+-----------------------------------+---------------------------------------------------------+
+| Fake Token Spoofing       | Attacker passes counterfeit mints | Anchor `InterfaceAccount<'info, Mint>` & seeds check:   |
+|                           | to drain legitimate vaults        | Vaults verified via `[b"vault_a", pool.key()]`.         |
++---------------------------+-----------------------------------+---------------------------------------------------------+
+| Early Settlement Crank    | Malicious crank attempts premature| Strict Slot Boundary Enforcement:                       |
+|                           | execution before window ends      | `clock.slot - last_epoch_start >= epoch_duration_slots`. |
++---------------------------+-----------------------------------+---------------------------------------------------------+
+| Integer Truncation Drain  | Attacker deposits 1 lamport to    | Explicit check: `require!(amount_in > 0)` and           |
+|                           | exploit integer rounding in fees  | `require!(net_amount >= min_amount_out)`.                |
++---------------------------+-----------------------------------+---------------------------------------------------------+

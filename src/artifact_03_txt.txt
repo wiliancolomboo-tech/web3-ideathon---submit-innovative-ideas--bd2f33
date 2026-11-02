@@ -1,0 +1,18 @@
+aetheris-protocol/
+├── Anchor.toml
+├── Cargo.toml
+├── programs/
+│   └── aetheris-core/
+│       ├── Cargo.toml
+│       └── src/
+│           ├── errors.rs
+│           ├── instructions/
+│           │   ├── deposit_order.rs
+│           │   ├── initialize_market.rs
+│           │   ├── mod.rs
+│           │   └── settle_batch.rs
+│           ├── lib.rs
+│           ├── math.rs
+│           └── state.rs
+└── tests/
+    └── aetheris.ts

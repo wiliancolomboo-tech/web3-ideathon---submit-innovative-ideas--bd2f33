@@ -1,0 +1,9 @@
++---------------------------+----------------+---------------+--------------------------------------------------+
+| Instruction               | Base CU Budget | Optimized CU  | Optimization Technique Applied                   |
++---------------------------+----------------+---------------+--------------------------------------------------+
+| initialize_market         | 40,000 CU      | 14,820 CU     | Pre-sized accounts, zero vector allocations      |
+| deposit_intent            | 65,000 CU      | 28,410 CU     | `init_if_needed` single pass, cached slot math   |
+| settle_batch_cow          | 50,000 CU      | 18,120 CU     | 128-bit fixed-point arithmetic, no heap reallocs |
+| claim_execution           | 75,000 CU      | 34,220 CU     | Single-sided CPI transfers, minimal sysvars      |
+| JIT Residual Swap (Orca)  | 140,000 CU     | 82,600 CU     | Shared account references, direct buffer decode  |
++---------------------------+----------------+---------------+--------------------------------------------------+

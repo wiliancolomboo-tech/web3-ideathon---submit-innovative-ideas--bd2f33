@@ -1,0 +1,54 @@
+import * as anchor from "@coral-xyz/anchor";
+import { BN } from "@coral-xyz/anchor";
+
+const INTERVAL_MS = 30_000;
+
+async function run() {
+  const provider = anchor.AnchorProvider.env();
+  anchor.setProvider(provider);
+  const program = anchor.workspace.Ideathon;
+  const conn = provider.connection;
+
+  // In production store active round PDKs in SQL/db or events indexer.
+  const watchedRounds: Array<{ round: anchor.web3.PublicKey; roundId: number; pdaPlatform: anchor.web3.PublicKey }> = [];
+
+  while (true) {
+    const now = Math.floor(Date.now() / 1000);
+
+    for (const item of watchedRounds) {
+      const rnd = await program.account.ideaRound.fetch(item.round);
+      if (rstate(rnd.state) === "SettledWithWinner" || rstate(rnd.state) === "SettledNoWinner") continue;
+      if (now >= Number(rnd.endTs)) {
+        await program.methods.settleRound(new BN(item.roundId))
+          .accounts({ platform: item.pdaPlatform, round: item.round })
+          .rpc();
+
+        const refreshed = await program.account.ideaRound.fetch(item.round);
+        if (rstate(refreshed.state) === "SettledWithWinner" && !refreshed.payoutProcessed) {
+          await program.methods.claimPrize(new BN(item.roundId))
+            .accounts({
+              platform: item.pdaPlatform,
+              round: item.round,
+              idea: refreshed.winner, // winner idea account
+              vault: refreshed.platform, // typically resolve vault PDA separately
+              treasury: refreshed.treasury,
+              author: refreshed.authority, // winner's author from idea account; fetch idea account to get recipient
+              systemProgram: anchor.web3.SystemProgram.programId,
+            })
+            .rpc();
+        }
+      }
+    }
+
+    await new Promise((res) => setTimeout(res, INTERVAL_MS));
+  }
+}
+
+function rstate(v: number) {
+  if (v === 1) return "Active";
+  if (v === 2) return "SettledWithWinner";
+  if (v === 3) return "SettledNoWinner";
+  return "Other";
+}
+
+run().catch(console.error);

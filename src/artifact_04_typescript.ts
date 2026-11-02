@@ -1,293 +1,275 @@
 import * as anchor from "@coral-xyz/anchor";
 import { Program } from "@coral-xyz/anchor";
-import { Aetheris } from "../target/types/aetheris";
+import { Solaegis } from "../target/types/solaegis";
 import {
   createMint,
   createAccount,
   mintTo,
-  TOKEN_PROGRAM_ID,
+  getAccount,
 } from "@solana/spl-token";
-import { PublicKey, Keypair, SystemProgram, SYSVAR_RENT_PUBKEY } from "@solana/web3.js";
+import { Keypair, PublicKey, SystemProgram } from "@solana/web3.js";
 import { expect } from "chai";
-import * as crypto from "crypto";
 
-describe("Aetheris: Frequent Batch Auction Core Tests", () => {
+describe("SolAegis Intent Engine Tests", () => {
   const provider = anchor.AnchorProvider.env();
   anchor.setProvider(provider);
-  const program = anchor.workspace.Aetheris as Program<Aetheris>;
 
-  let baseMint: PublicKey;
-  let quoteMint: PublicKey;
-  let poolPda: PublicKey;
-  let vaultBasePda: PublicKey;
-  let vaultQuotePda: PublicKey;
-  let epochPda: PublicKey;
+  const program = anchor.workspace.Solaegis as Program<Solaegis>;
 
-  const authority = provider.wallet as anchor.Wallet;
-  const buyer = Keypair.generate();
-  const seller = Keypair.generate();
-  const keeper = Keypair.generate();
+  let mintA: PublicKey;
+  let mintB: PublicKey;
+  let marketPda: PublicKey;
+  let vaultAPda: PublicKey;
+  let vaultBPda: PublicKey;
 
-  let buyerQuoteAccount: PublicKey;
-  let sellerBaseAccount: PublicKey;
-  let buyerBaseAccount: PublicKey;
-  let sellerQuoteAccount: PublicKey;
+  const admin = (provider.wallet as anchor.Wallet).payer;
+  const alice = Keypair.generate();
+  const bob = Keypair.generate();
+  const solver = Keypair.generate();
 
-  const buySalt = crypto.randomBytes(16);
-  const sellSalt = crypto.randomBytes(16);
+  let aliceTokenA: PublicKey;
+  let aliceTokenB: PublicKey;
+  let bobTokenA: PublicKey;
+  let bobTokenB: PublicKey;
 
-  const buyPrice = new anchor.BN(100_000_000); // 100.0 Quote per Base (scaled 1e6)
-  const buyAmount = new anchor.BN(100_000_000); // 100 Quote
-  const sellPrice = new anchor.BN(95_000_000);  // 95.0 Quote per Base
-  const sellAmount = new anchor.BN(1_000_000);  // 1 Base
-
-  function computeCommitHash(
-    user: PublicKey,
-    side: number,
-    price: anchor.BN,
-    amount: anchor.BN,
-    salt: Buffer
-  ): Buffer {
-    const priceBuf = price.toArrayLike(Buffer, "le", 8);
-    const amountBuf = amount.toArrayLike(Buffer, "le", 8);
-    const payload = Buffer.concat([
-      user.toBuffer(),
-      Buffer.from([side]),
-      priceBuf,
-      amountBuf,
-      salt,
-    ]);
-    return crypto.createHash("sha256").update(payload).digest();
-  }
+  const PRECISION = new anchor.BN("1000000000000"); // 1e12
 
   before(async () => {
-    // Fund test wallets
-    for (const kp of [buyer, seller, keeper]) {
-      const sig = await provider.connection.requestAirdrop(kp.publicKey, 10 * anchor.web3.LAMPORTS_PER_SOL);
+    // Fund test actors
+    for (const actor of [alice, bob, solver]) {
+      const sig = await provider.connection.requestAirdrop(
+        actor.publicKey,
+        5 * anchor.web3.LAMPORTS_PER_SOL
+      );
       await provider.connection.confirmTransaction(sig);
     }
 
-    // Create Base and Quote Mints
-    baseMint = await createMint(provider.connection, authority.payer, authority.publicKey, null, 6);
-    quoteMint = await createMint(provider.connection, authority.payer, authority.publicKey, null, 6);
+    // Create dual mints: Token A (e.g., SOL) and Token B (e.g., USDC)
+    mintA = await createMint(
+      provider.connection,
+      admin,
+      admin.publicKey,
+      null,
+      9
+    );
+    mintB = await createMint(
+      provider.connection,
+      admin,
+      admin.publicKey,
+      null,
+      6
+    );
 
     // Derive PDAs
-    [poolPda] = PublicKey.findProgramAddressSync(
-      [Buffer.from("pool"), baseMint.toBuffer(), quoteMint.toBuffer()],
+    [marketPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("market"), mintA.toBuffer(), mintB.toBuffer()],
       program.programId
     );
-    [epochPda] = PublicKey.findProgramAddressSync(
-      [Buffer.from("epoch"), poolPda.toBuffer(), new anchor.BN(1).toArrayLike(Buffer, "le", 8)],
+    [vaultAPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("vault_a"), marketPda.toBuffer()],
       program.programId
     );
-    [vaultBasePda] = PublicKey.findProgramAddressSync(
-      [Buffer.from("vault_base"), poolPda.toBuffer()],
-      program.programId
-    );
-    [vaultQuotePda] = PublicKey.findProgramAddressSync(
-      [Buffer.from("vault_quote"), poolPda.toBuffer()],
+    [vaultBPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("vault_b"), marketPda.toBuffer()],
       program.programId
     );
 
     // Setup Token Accounts
-    buyerQuoteAccount = await createAccount(provider.connection, buyer, quoteMint, buyer.publicKey);
-    buyerBaseAccount = await createAccount(provider.connection, buyer, baseMint, buyer.publicKey);
-    sellerBaseAccount = await createAccount(provider.connection, seller, baseMint, seller.publicKey);
-    sellerQuoteAccount = await createAccount(provider.connection, seller, quoteMint, seller.publicKey);
+    aliceTokenA = await createAccount(provider.connection, alice, mintA, alice.publicKey);
+    aliceTokenB = await createAccount(provider.connection, alice, mintB, alice.publicKey);
+    bobTokenA = await createAccount(provider.connection, bob, mintA, bob.publicKey);
+    bobTokenB = await createAccount(provider.connection, bob, mintB, bob.publicKey);
 
     // Mint token balances
-    await mintTo(provider.connection, authority.payer, quoteMint, buyerQuoteAccount, authority.payer, 500_000_000);
-    await mintTo(provider.connection, authority.payer, baseMint, sellerBaseAccount, authority.payer, 10_000_000);
+    // Alice has 10 Token A (10 * 1e9)
+    await mintTo(provider.connection, admin, mintA, aliceTokenA, admin, 10_000_000_000);
+    // Bob has 2000 Token B (2000 * 1e6)
+    await mintTo(provider.connection, admin, mintB, bobTokenB, admin, 2_000_000_000);
   });
 
-  it("1. Initializes Auction Pool and Epoch #1 successfully", async () => {
-    const minDeposit = new anchor.BN(1_000);
-
+  it("Initializes the SolAegis Market PDA and Escrow Vaults", async () => {
     await program.methods
-      .initializePool(minDeposit)
+      .initializeMarket(30) // 30 bps = 0.3%
       .accounts({
-        authority: authority.publicKey,
-        baseMint,
-        quoteMint,
-        pool: poolPda,
-        epochState: epochPda,
-        vaultBase: vaultBasePda,
-        vaultQuote: vaultQuotePda,
+        admin: admin.publicKey,
+        mintA: mintA,
+        mintB: mintB,
+        market: marketPda,
+        vaultA: vaultAPda,
+        vaultB: vaultBPda,
         systemProgram: SystemProgram.programId,
-        tokenProgram: TOKEN_PROGRAM_ID,
-        rent: SYSVAR_RENT_PUBKEY,
+        tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID,
+        rent: anchor.web3.SYSVAR_RENT_PUBKEY,
       })
       .rpc();
 
-    const poolAccount = await program.account.auctionPool.fetch(poolPda);
-    expect(poolAccount.authority.toBase58()).to.equal(authority.publicKey.toBase58());
-    expect(poolAccount.currentEpoch.toNumber()).to.equal(1);
+    const marketAccount = await program.account.market.fetch(marketPda);
+    expect(marketAccount.feeBps).to.equal(30);
+    expect(marketAccount.mintA.toBase58()).to.equal(mintA.toBase58());
   });
 
-  it("2. Commits hashed orders for Buyer and Seller within Commit Window", async () => {
-    const buyerHash = computeCommitHash(buyer.publicKey, 0, buyPrice, buyAmount, buySalt);
-    const sellerHash = computeCommitHash(seller.publicKey, 1, sellPrice, sellAmount, sellSalt);
+  it("Submits complementary intents into the current slot bucket (Alice AtoB, Bob BtoA)", async () => {
+    const currentSlot = await provider.connection.getSlot();
+    const bucketSlot = Math.floor(currentSlot / 4) * 4;
+    const bucketSlotBuffer = new anchor.BN(bucketSlot).toArrayLike(Buffer, "le", 8);
 
-    const [buyerCommitPda] = PublicKey.findProgramAddressSync(
-      [Buffer.from("commit"), epochPda.toBuffer(), buyer.publicKey.toBuffer()],
+    const [batchPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("batch"), marketPda.toBuffer(), bucketSlotBuffer],
       program.programId
     );
 
-    await program.methods
-      .commitOrder(Array.from(buyerHash), buyAmount)
-      .accounts({
-        user: buyer.publicKey,
-        pool: poolPda,
-        epochState: epochPda,
-        commitmentRecord: buyerCommitPda,
-        userTokenAccount: buyerQuoteAccount,
-        depositMint: quoteMint,
-        poolVault: vaultQuotePda,
-        tokenProgram: TOKEN_PROGRAM_ID,
-        systemProgram: SystemProgram.programId,
-      })
-      .signers([buyer])
-      .rpc();
-
-    const [sellerCommitPda] = PublicKey.findProgramAddressSync(
-      [Buffer.from("commit"), epochPda.toBuffer(), seller.publicKey.toBuffer()],
+    const [aliceIntentPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("intent"), batchPda.toBuffer(), alice.publicKey.toBuffer()],
       program.programId
     );
 
+    const [bobIntentPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("intent"), batchPda.toBuffer(), bob.publicKey.toBuffer()],
+      program.programId
+    );
+
+    // Alice intends to swap 2 Token A for at least 380 Token B (Price >= 190 B/A)
+    const amountInAlice = new anchor.BN(2_000_000_000);
+    const minOutAlice = new anchor.BN(380_000_000);
+
     await program.methods
-      .commitOrder(Array.from(sellerHash), sellAmount)
+      .depositIntent(amountInAlice, minOutAlice, { atoB: {} })
       .accounts({
-        user: seller.publicKey,
-        pool: poolPda,
-        epochState: epochPda,
-        commitmentRecord: sellerCommitPda,
-        userTokenAccount: sellerBaseAccount,
-        depositMint: baseMint,
-        poolVault: vaultBasePda,
-        tokenProgram: TOKEN_PROGRAM_ID,
+        user: alice.publicKey,
+        market: marketPda,
+        batch: batchPda,
+        intent: aliceIntentPda,
+        userTokenAccount: aliceTokenA,
+        vaultA: vaultAPda,
+        vaultB: vaultBPda,
+        tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID,
         systemProgram: SystemProgram.programId,
       })
-      .signers([seller])
+      .signers([alice])
       .rpc();
 
-    const buyerCommit = await program.account.orderCommitment.fetch(buyerCommitPda);
-    expect(buyerCommit.escrowAmount.toNumber()).to.equal(buyAmount.toNumber());
-    expect(buyerCommit.isRevealed).to.be.false;
+    // Bob intends to swap 400 Token B for at least 1.9 Token A (Price <= 210.5 B/A)
+    const amountInBob = new anchor.BN(400_000_000);
+    const minOutBob = new anchor.BN(1_900_000_000);
+
+    await program.methods
+      .depositIntent(amountInBob, minOutBob, { btoA: {} })
+      .accounts({
+        user: bob.publicKey,
+        market: marketPda,
+        batch: batchPda,
+        intent: bobIntentPda,
+        userTokenAccount: bobTokenB,
+        vaultA: vaultAPda,
+        vaultB: vaultBPda,
+        tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID,
+        systemProgram: SystemProgram.programId,
+      })
+      .signers([bob])
+      .rpc();
+
+    const batchAccount = await program.account.batchBucket.fetch(batchPda);
+    expect(batchAccount.totalInA.toString()).to.equal(amountInAlice.toString());
+    expect(batchAccount.totalInB.toString()).to.equal(amountInBob.toString());
+    expect(batchAccount.orderCount).to.equal(2);
   });
 
-  it("3. Fast-forwards past commit_end_slot and reveals both orders", async () => {
-    // Wait / Mine slots until commit_end_slot reached (Local validator slot forward)
+  it("Executes CoW Settlement via Solver at Uniform Clearing Price (200 B per A)", async () => {
+    // Wait until slot bucket maturation (+4 slots)
     let currentSlot = await provider.connection.getSlot();
-    const epochState = await program.account.epochState.fetch(epochPda);
-    const targetSlot = epochState.commitEndSlot.toNumber();
+    const bucketSlot = Math.floor(currentSlot / 4) * 4;
+    const bucketSlotBuffer = new anchor.BN(bucketSlot).toArrayLike(Buffer, "le", 8);
 
-    while (currentSlot <= targetSlot) {
+    const [batchPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("batch"), marketPda.toBuffer(), bucketSlotBuffer],
+      program.programId
+    );
+
+    while (currentSlot < bucketSlot + 5) {
       await new Promise((resolve) => setTimeout(resolve, 500));
       currentSlot = await provider.connection.getSlot();
     }
 
-    const [buyerCommitPda] = PublicKey.findProgramAddressSync(
-      [Buffer.from("commit"), epochPda.toBuffer(), buyer.publicKey.toBuffer()],
+    // Clearing Price: 200.0 Token B per 1.0 Token A
+    // Scaled by 1e12: 200 * 1e12 = 200_000_000_000_000
+    const clearingPrice = new anchor.BN("200000000000000");
+
+    await program.methods
+      .settleBatchCow(clearingPrice)
+      .accounts({
+        solver: solver.publicKey,
+        market: marketPda,
+        batch: batchPda,
+      })
+      .signers([solver])
+      .rpc();
+
+    const settledBatch = await program.account.batchBucket.fetch(batchPda);
+    expect(settledBatch.status).to.deep.equal({ settled: {} });
+    expect(settledBatch.matchedVolumeA.toString()).to.equal("2000000000");
+    expect(settledBatch.matchedVolumeB.toString()).to.equal("400000000");
+  });
+
+  it("Allows Alice and Bob to claim matched proceeds with zero slippage violation", async () => {
+    const currentSlot = await provider.connection.getSlot();
+    const bucketSlot = Math.floor(currentSlot / 4) * 4;
+    const bucketSlotBuffer = new anchor.BN(bucketSlot).toArrayLike(Buffer, "le", 8);
+
+    const [batchPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("batch"), marketPda.toBuffer(), bucketSlotBuffer],
       program.programId
     );
 
-    await program.methods
-      .revealOrder(0, buyPrice, buyAmount, Array.from(buySalt))
-      .accounts({
-        user: buyer.publicKey,
-        epochState: epochPda,
-        commitmentRecord: buyerCommitPda,
-      })
-      .signers([buyer])
-      .rpc();
-
-    const [sellerCommitPda] = PublicKey.findProgramAddressSync(
-      [Buffer.from("commit"), epochPda.toBuffer(), seller.publicKey.toBuffer()],
+    const [aliceIntentPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("intent"), batchPda.toBuffer(), alice.publicKey.toBuffer()],
       program.programId
     );
 
+    const [bobIntentPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("intent"), batchPda.toBuffer(), bob.publicKey.toBuffer()],
+      program.programId
+    );
+
+    // Alice claims Token B
     await program.methods
-      .revealOrder(1, sellPrice, sellAmount, Array.from(sellSalt))
+      .claimExecution()
       .accounts({
-        user: seller.publicKey,
-        epochState: epochPda,
-        commitmentRecord: sellerCommitPda,
+        user: alice.publicKey,
+        market: marketPda,
+        batch: batchPda,
+        intent: aliceIntentPda,
+        vaultA: vaultAPda,
+        vaultB: vaultBPda,
+        userTokenAccountA: aliceTokenA,
+        userTokenAccountB: aliceTokenB,
+        tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID,
       })
-      .signers([seller])
+      .signers([alice])
       .rpc();
 
-    const updatedEpoch = await program.account.epochState.fetch(epochPda);
-    expect(updatedEpoch.revealedOrderCount).to.equal(2);
-  });
-
-  it("4. Settle Batch Auction calculates uniform clearing price without slippage", async () => {
-    // Wait until reveal window expires
-    let currentSlot = await provider.connection.getSlot();
-    const epochState = await program.account.epochState.fetch(epochPda);
-    const targetSlot = epochState.revealEndSlot.toNumber();
-
-    while (currentSlot <= targetSlot) {
-      await new Promise((resolve) => setTimeout(resolve, 500));
-      currentSlot = await provider.connection.getSlot();
-    }
-
-    const tx = await program.methods
-      .settleBatchAuction()
-      .accounts({
-        crankKeeper: keeper.publicKey,
-        pool: poolPda,
-        epochState: epochPda,
-      })
-      .signers([keeper])
-      .rpc();
-
-    const settledEpoch = await program.account.epochState.fetch(epochPda);
-    expect(settledEpoch.isSettled).to.be.true;
-    expect(settledEpoch.clearingPrice.toNumber()).to.be.greaterThan(0);
-    expect(settledEpoch.matchedVolume.toNumber()).to.be.greaterThan(0);
-  });
-
-  it("5. Allows Buyer and Seller to claim proceeds atomically", async () => {
-    // Buyer claims filled order (index 0)
+    // Bob claims Token A
     await program.methods
-      .claimProceeds(0)
+      .claimExecution()
       .accounts({
-        user: buyer.publicKey,
-        pool: poolPda,
-        epochState: epochPda,
-        vaultBase: vaultBasePda,
-        vaultQuote: vaultQuotePda,
-        userBaseAccount: buyerBaseAccount,
-        userQuoteAccount: buyerQuoteAccount,
-        baseMint,
-        quoteMint,
-        tokenProgram: TOKEN_PROGRAM_ID,
+        user: bob.publicKey,
+        market: marketPda,
+        batch: batchPda,
+        intent: bobIntentPda,
+        vaultA: vaultAPda,
+        vaultB: vaultBPda,
+        userTokenAccountA: bobTokenA,
+        userTokenAccountB: bobTokenB,
+        tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID,
       })
-      .signers([buyer])
+      .signers([bob])
       .rpc();
 
-    // Seller claims filled order (index 1)
-    await program.methods
-      .claimProceeds(1)
-      .accounts({
-        user: seller.publicKey,
-        pool: poolPda,
-        epochState: epochPda,
-        vaultBase: vaultBasePda,
-        vaultQuote: vaultQuotePda,
-        userBaseAccount: sellerBaseAccount,
-        userQuoteAccount: sellerQuoteAccount,
-        baseMint,
-        quoteMint,
-        tokenProgram: TOKEN_PROGRAM_ID,
-      })
-      .signers([seller])
-      .rpc();
+    const aliceB = await getAccount(provider.connection, aliceTokenB);
+    const bobA = await getAccount(provider.connection, bobTokenA);
 
-    const buyerBaseBalance = await provider.connection.getTokenAccountBalance(buyerBaseAccount);
-    const sellerQuoteBalance = await provider.connection.getTokenAccountBalance(sellerQuoteAccount);
-
-    expect(Number(buyerBaseBalance.value.amount)).to.be.greaterThan(0);
-    expect(Number(sellerQuoteBalance.value.amount)).to.be.greaterThan(0);
+    // Alice received 400 Token B (400_000_000)
+    expect(aliceB.amount.toString()).to.equal("400000000");
+    // Bob received 2 Token A (2_000_000_000)
+    expect(bobA.amount.toString()).to.equal("2000000000");
   });
 });

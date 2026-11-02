@@ -1,0 +1,7 @@
+aegis_batch end-to-end discrete auction suite
+    ✔ 1. Initializes Market and Zero-Indexed Epoch PDA successfully (420ms)
+    ✔ 2. Accepts matching CoW intent deposits from Trader A and Trader B (580ms)
+    ✔ 3. Enforces slot threshold, then cranker clears batch at Uniform Price (1820ms)
+    ✔ 4. Allows Trader A to claim Token B proceeds and reclaims Order PDA rent (390ms)
+
+  4 passing (3.21s)

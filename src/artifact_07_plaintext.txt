@@ -1,0 +1,9 @@
+AegisFlow Batch Clearing Engine Tests
+    ✔ 1. Initializes Market with Segregated Vaults (18200 CU) (428ms)
+    ✔ 2. Opens Batch Epoch 1 (11400 CU) (312ms)
+    ✔ 3. Places Buyer & Seller Limit Intents (29800 CU) (640ms)
+    ✔ 4. Fails to Clear Batch Before Slot Expiration (Guard Verification) (185ms)
+    ✔ 5. Advances Slots & Executes Uniform Batch Settlement (34100 CU) (520ms)
+    ✔ 6. Settles Matched Orders at Uniform Price P* (24600 CU) (495ms)
+
+  6 passing (2.6s)

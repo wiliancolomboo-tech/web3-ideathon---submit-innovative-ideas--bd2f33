@@ -1,0 +1,7 @@
+HyperCow Protocol Tests
+    ✔ Initializes the protocol configuration (412ms)
+    ✔ User A and User B create opposing swap intents (589ms)
+    ✔ Executes atomic CoW batch settlement at 1:1 price (385ms)
+    ✔ Allows user cancellation and recovers rent/funds (311ms)
+
+  4 passing (2s)

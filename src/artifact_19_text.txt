@@ -1,0 +1,7 @@
+Aetheris Protocol Tests
+    ✔ 1. Initializes MarketConfig PDA correctly (124ms)
+    ✔ 2. Commits Peer-to-Peer Orders (Alice sells Base, Bob buys Base with Quote) (322ms)
+    ✔ 3. Executes Uniform Clearing Price and CoW Clearing (158ms)
+    ✔ 4. Claims Settlement: Alice receives exact Quote, Bob receives exact Base with Zero Slippage (286ms)
+
+  4 passing (1.2s)

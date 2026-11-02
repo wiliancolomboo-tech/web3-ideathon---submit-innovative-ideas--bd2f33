@@ -1,0 +1,24 @@
+┌──────────────────────────────────────────────┐
+                       │          AETHERIS DEFENSE-IN-DEPTH           │
+┌──────────────────────┼──────────────────────┬───────────────────────┼──────────────────────────────┐
+│ Attack Vector        │ Vulnerability Nature │ Protocol Defense      │ Implementation Proof         │
+├──────────────────────┼──────────────────────┼───────────────────────┼──────────────────────────────┤
+│ Sandwich Attack /    │ Adversarial order    │ Discrete Continuous   │ All trades within Epoch T_k  │
+│ Jito Frontrunning    │ reordering in slot   │ Batch Auctioning      │ clear at identical marginal  │
+│                      │                      │                       │ price P*. Order sequence = 0 │
+├──────────────────────┼──────────────────────┼───────────────────────┼──────────────────────────────┤
+│ Reentrancy via       │ External execution   │ CEI Pattern & Atomic  │ Receipt marked `claimed=true`│
+│ Token-2022 Hooks     │ callback hijacking   │ State Lockouts        │ before Token CPI transfer is │
+│                      │                      │                       │ dispatched.                  │
+├──────────────────────┼──────────────────────┼───────────────────────┼──────────────────────────────┤
+│ Loss Versus          │ AMM stale price arb  │ Coincidence-of-Wants  │ Peer-to-peer flow crosses at │
+│ Rebalancing (LVR)    │ against passive LPs  │ Internal Matching     │ equilibrium with zero pool   │
+│                      │                      │                       │ impact, bypassing AMM fees.  │
+├──────────────────────┼──────────────────────┼───────────────────────┼──────────────────────────────┤
+│ Arithmetic Overflow/ │ Numerical precision  │ 64.64-scale 128-bit   │ Explicit `checked_mul` and   │
+│ Underflow            │ exploitation         │ FixedPoint Struct     │ `checked_sub` with bounds.   │
+├──────────────────────┼──────────────────────┼───────────────────────┼──────────────────────────────┤
+│ PDA Seed Collision / │ Forged accounts /    │ Canonical Seeds &     │ Seeds enforce distinct       │
+│ Vault Draining       │ unauthorized signers │ Anchor Typed Contexts │ [b"vault_base", BatchKey]    │
+│                      │                      │                       │ with type-checked mints.     │
+└──────────────────────┴──────────────────────┴───────────────────────┴──────────────────────────────┘

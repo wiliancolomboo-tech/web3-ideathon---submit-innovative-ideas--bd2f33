@@ -1,0 +1,7 @@
+NexusFlow Test Matrix
+    ✔ 1. Initializes Pool & Vault with deterministic PDAs (412ms)
+    ✔ 2. Executes Atomic Flash-CPI Underwriting Lifecycle within a Single Slot Bundle (328ms)
+    ✔ 3. Enforces Failure when Reentrancy or Double Flash Borrow is Attempted (184ms)
+    ✔ 4. Rejects Flash Repay when Pool is Not Locked (96ms)
+
+  4 passing (1s)

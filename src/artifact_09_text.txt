@@ -1,0 +1,8 @@
+nex_intent protocol e2e test suite
+    ✔ Initializes the NexIntent Protocol Configuration (320ms)
+    ✔ Alice Opens an Intent: Sell 10 SOL for minimum 1450 USDC (412ms)
+    ✔ Bob Opens a Counter-Intent: Sell 1500 USDC for minimum 9.9 SOL (398ms)
+    ✔ Solver Keeper executes Batch CoW Clearing settlement atomically (512ms)
+    ✔ Verifies cancellation and fund recovery if unmatched (380ms)
+
+  5 passing (2.4s)

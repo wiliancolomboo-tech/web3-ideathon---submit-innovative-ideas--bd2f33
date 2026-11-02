@@ -1,0 +1,29 @@
+### [0:00 - 0:25] THE HOOK & THE MEV PARADOX
+[Visual: Split screen. Left: Solana Explorer showing 3 consecutive transactions in a slot (Raydium swap sandwiched between two Jito MEV bundles). Right: Terminal with RED sandwich loss metric.]
+VOICEOVER:
+"Solana is the fastest blockchain in the world. But continuous-time sub-second execution has an invisible tax: MEV and toxic LVR. 
+When every microsecond determines order placement, retail traders get sandwiched, and market makers bleed millions to latency arbitrageurs. 
+Today, we change the paradigm. Meet NexusFi: the first cryptographically secure Frequent Batch Auction DEX on Solana that eliminates intra-batch MEV at the protocol level."
+
+### [0:25 - 0:55] HOW IT WORKS: DISCRETE AUCTIONS ON HIGH-SPEED ARCHITECTURE
+[Visual: Dynamic UI flow diagram showing Slot N through N+5, moving from Commit to Reveal, into Uniform Clearing Price resolution.]
+VOICEOVER:
+"NexusFi replaces continuous execution with 4-slot discrete batch windows. 
+First, users submit sealed order commitments—hashes bound to their public key, limit price, and volume, backed by Token-2022 escrowed deposits. 
+No searcher, validator, or MEV bot can see your trade parameters. 
+Once the commit slot window elapses, the reveal phase unlocks. Our Anchor program verifies cryptographic preimages instantly with zero heap allocations."
+
+### [0:55 - 1:30] LIVE DEMONSTRATION: SOLVING THE CLEARING PRICE
+[Visual: VS Code terminal executing `anchor test`. Terminal logs showing Buyer and Seller orders matched at identical price tick 10, followed by a simulated griefer getting slashed by the keeper.]
+VOICEOVER:
+"Watch this live test execution. We have two counterparties submitting hidden intents. 
+When the batch clears, our deterministic on-chain engine calculates the Uniform Clearing Price—the exact intersection of the discrete supply and demand curves. 
+Both buyer and seller trade at the exact same price P*! Zero sandwiching. Zero slippage extraction. 
+And notice the malicious griefer who tried to lock up liquidity? Our permissionless crank slashed 5% of their deposit, rewarding the keeper and closing the ephemeral PDA to reclaim rent."
+
+### [1:30 - 2:00] WHY NEXUSFI WINS FIRST PLACE
+[Visual: Comparison benchmark chart of NexusFi vs Standard CLOB vs AMM; Camera switches to presenter with architecture slides.]
+VOICEOVER:
+"NexusFi isn't just an idea—it is production-grade Anchor code optimized to consume less than 50k Compute Units per settlement step. 
+By turning Solana's unmatched throughput into a discrete batch auction engine, we provide institutional-grade fairness with Token-2022 compatibility and ephemeral rent-reclaiming storage. 
+NexusFi solves Solana's biggest DeFi bottleneck. Thank you."

@@ -1,0 +1,6 @@
+[programs.devnet]
+khora_intent = "KhorA11111111111111111111111111111111111111"
+
+[provider]
+cluster = "devnet"
+wallet = "~/.config/solana/id.json"

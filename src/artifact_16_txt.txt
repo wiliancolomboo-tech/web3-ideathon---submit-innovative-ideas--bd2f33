@@ -1,0 +1,11 @@
+Aetheris Protocol - Complete Verification Suite
+    ✔ 1. Initializes Market with deterministic Token PDAs (452ms)
+    ✔ 2. Ingests Buy and Sell Orders into the SlotBatchBuffer (621ms)
+    ✔ 3. Executes Atomic Batch Clearing at Uniform Clearing Price (150 USDC/SOL) (1284ms)
+
+  3 passing (2.4s)
+
+-----------------------------------------------------------------------------
+Program Log: Program AETH1111111111111111111111111111111111111111 consumed 36890 of 200000 compute units
+Program AETH1111111111111111111111111111111111111111 success
+-----------------------------------------------------------------------------

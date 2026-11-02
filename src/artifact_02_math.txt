@@ -1,0 +1,1 @@
+\text{UCP} = P^* \quad \text{such that} \quad \sum_{i \in \mathcal{B}} \text{Vol}_{buy}(P^*) = \sum_{j \in \mathcal{S}} \text{Vol}_{sell}(P^*) + \Delta \text{Reserve}

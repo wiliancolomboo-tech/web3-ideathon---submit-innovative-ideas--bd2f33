@@ -1,0 +1,8 @@
+Kinetix Protocol Unit & Integration QA Suite
+    ✔ 1. Initializes Global Config with 80% LTV and Linear Decay (412ms)
+    ✔ 2. Initializes Isolated Borrower Position Account (210ms)
+    ✔ 3. Deposits Collateral and Validates Custody in Vault (389ms)
+    ✔ 4. Prevents Borrow when Price Oracle Exceeds Confidence Margin (195ms)
+    ✔ 5. Reentrancy and Signer Guards Protect State (144ms)
+
+  5 passing (1.35s)

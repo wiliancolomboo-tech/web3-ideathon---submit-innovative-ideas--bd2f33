@@ -1,0 +1,45 @@
+flowchart TD
+    subgraph ClientKeeper [Off-Chain Keepers & Liquidators]
+        A[Pyth Hermes Service] -->|Signed Price Update VAA/Payload| B[Keeper Bot / Jito Bundler]
+        C[Lending Protocol Event Monitor] -->|Underwater Health Factor < 1.0| B
+    end
+
+    subgraph AtomicBundle [Single Atomic Transaction Bundle]
+        B -->|1. Post Price Update| D[Pyth Solana Receiver Program]
+        D -->|Write Decoded Price PDA| E[(Pyth Price Feed Account)]
+        B -->|2. Execute Aura Liquidate| F[AuraCDA Engine Program]
+    end
+
+    subgraph AuraProgram [AuraCDA Program Execution]
+        F --> G{Validate PDA Signatures & Epoch/Slot Stash}
+        G -->|Valid| H[Fetch Pyth Oracle Price via CPI]
+        E -.->|Read Verified Slot & Confidence Interval| H
+        H --> I{Check Price Confidence & Expiry}
+        I -->|Stale or High Conf Interval| J[Revert: OracleConfidenceTooWide]
+        I -->|Healthy| K[Calculate Slot-Delta Decay Math]
+        K --> L[Compute Dynamic Clearing Price P_t]
+        L --> M[Determine Debt Repay & Collateral Seizure Amounts]
+        M --> N{Verify Slippage Bounds}
+        N -->|Under Min Collateral Out| O[Revert: SlippageExceeded]
+        N -->|Acceptable| P[Execute Token Transfers]
+    end
+
+    subgraph Settlement [Token Settlement & State Update]
+        P -->|CPI: Burn or Transfer Debt Asset| Q[(Liquidator Debt Token Account)]
+        Q -->|Repay into| R[(Protocol Debt Reserve Vault)]
+        P -->|CPI: Transfer Seized Collateral| S[(Protocol Collateral Vault)]
+        S -->|Seized Asset| T[(Liquidator Collateral Account)]
+        S -->|Residual Remainder Returned| U[(Borrower Position Vault)]
+        P -->|Update State PDA| V[(Aura Liquidation Auction PDA)]
+        V -->|Close if Zero Debt Remaining| W[Reclaim Auction Storage Rent]
+    end
+
+    classDef anchor fill:#1E293B,stroke:#0EA5E9,stroke-width:2px,color:#F8FAFC;
+    classDef storage fill:#0F172A,stroke:#6366F1,stroke-width:1.5px,color:#E2E8F0;
+    classDef alert fill:#450A0A,stroke:#DC2626,stroke-width:1.5px,color:#FCA5A5;
+    classDef success fill:#052E16,stroke:#16A34A,stroke-width:1.5px,color:#86EFAC;
+
+    class F,G,H,K,L,M,N,P anchor;
+    class E,Q,R,S,T,U,V storage;
+    class J,O alert;
+    class W success;

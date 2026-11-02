@@ -1,0 +1,28 @@
+# IDEATHON | Solana “IdeaThon Vault” Technical Deliverable
+
+## 1) Executive Technical Summary & System Value Proposition
+
+## IdeaThon Vault (on Solana + Anchor)
+
+**Problem addressed**  
+Hackathon organizers need a verifiable, trust-minimized way to collect ideas, enforce submission/voting windows, prevent duplicate/abusive voting, and expose auditable winner selection—without relying on centralized spreadsheets/discouraged bot voting.
+
+**Solution**  
+A Solana program (`idea_vault`) manages:
+
+- **Config** singleton (protocol parameters: fees, keeper, treasury)
+- **Hackathon** PDAs (one per contest) with lifecycle phases (Setup → Submission → Voting → Finalized)
+- **Idea** PDAs (one per idea; immutable title/summary, mutable vote aggregates)
+- **Vote** PDAs (one per idea+voter; anti-duplication)
+- **Keeper loop** (off-chain keeper service to advance phases and publish winner from deterministic scoring)
+
+**Why it wins**  
+- Fully on-chain state machine with deterministic deadlines  
+- Economical account model (single idea account per submission; one vote account per elector/idea)  
+- Guard-heavy security model (phase checks, authority checks, bounds checks, signer checks, immutable IDs)  
+- Compute-conscious and easy to index for frontends  
+- Minimal dependencies: no native off-chain trust except for optional “winner publication” done by keeper after reading all vote states.
+
+---
+
+## 2) Architecture Flowchart (Mermaid)

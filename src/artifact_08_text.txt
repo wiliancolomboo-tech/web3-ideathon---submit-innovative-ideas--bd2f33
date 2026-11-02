@@ -1,0 +1,10 @@
+kinetix-e2e-suite
+    ✔ 1. Initializes global protocol configuration with 20 bps fee (210ms)
+    ✔ 2. Registers solver node successfully (185ms)
+    ✔ 3. Creates and escrows a user trade intent (340ms)
+    ✔ 4. Fails settlement if solver violates slippage boundary (160ms)
+    ✔ 5. Atomically fills intent with price improvement & fee split (412ms)
+    ✔ 6. Rejects double-fill attack vector (145ms)
+    ✔ 7. Allows cancellation and 100% refund of an expired or active intent (320ms)
+
+  7 passing (2.1s)

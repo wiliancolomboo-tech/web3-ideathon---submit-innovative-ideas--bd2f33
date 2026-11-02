@@ -1,0 +1,24 @@
+[package]
+name = "aura_engine"
+version = "0.1.0"
+description = "AURA: Sub-Slot Atomic JIT Liquidation & Ephemeral Flash-Credit Mesh"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "aura_engine"
+
+[features]
+no-entrypoint = []
+no-idl = []
+no-log-ix-name = []
+cpi = ["no-entrypoint"]
+default = []
+
+[dependencies]
+anchor-lang = { version = "0.30.1", features = ["init-if-needed"] }
+anchor-spl = { version = "0.30.1", features = ["token", "associated_token"] }
+bytemuck = { version = "1.14.0", features = ["derive", "min_const_generics"] }
+pyth-sdk-solana = "0.10.1"
+solana-program = "1.18.0"
+thiserror = "1.0.50"
